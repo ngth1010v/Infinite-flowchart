@@ -56,6 +56,22 @@ int main(int argc, char** argv) {
     s.beginLinkDrag(a, Port::Bottom);
     s.endLinkDrag({0, 200});
     CHECK(s.itemCount() == 3 && a->links.size() == 1 && b->links.size() == 1);
+    CHECK(a->links[0]->toPort == Port::Top);  // dropped on B's center anchor: side facing A
+    {   // Center anchor picks the side facing the source, even where the drop point alone would not.
+        ChartScene sc;
+        auto* p = sc.addNode(FlowShape::Process, {0, 0});
+        auto* q = sc.addNode(FlowShape::Decision, {400, 50});
+        sc.beginLinkDrag(p, Port::Right);
+        sc.endLinkDrag(q->pos());
+        CHECK(q->links.size() == 1 && q->links[0]->toPort == Port::Left && q->links[0]->toAuto);
+        q->setPos(0, 300);  // moved below the source: auto end switches to the side facing it
+        CHECK(q->links[0]->toPort == Port::Top);
+        CHECK(q->links[0]->toJson()["toPort"] == "auto");
+        q->setPos(400, 50);
+        sc.beginLinkDrag(p, Port::Right);
+        sc.endLinkDrag(q->pos() + QPointF(0, -40));  // off-center, near the top: top side as before
+        CHECK(q->links.size() == 2 && q->links[1]->toPort == Port::Top);
+    }
     // Clicking an arrow (no drag) adds a connected copy of the shape.
     s.beginLinkDrag(b, Port::Right);
     s.endLinkDrag(b->portScenePos(Port::Right));

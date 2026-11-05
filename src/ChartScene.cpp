@@ -199,8 +199,9 @@ ChartItem* ChartScene::createItem(const QJsonObject& j) {
 void ChartScene::applyLinkJson(LinkItem* l, const QJsonObject& j) {
     l->text = j["text"].toString();
     l->style = styleFromJson(j["style"].toObject());
-    l->setEnds(nodeById(j["from"].toInt()), portFromKey(j["fromPort"].toString()), nodeById(j["to"].toInt()),
-               portFromKey(j["toPort"].toString()));
+    const QString fp = j["fromPort"].toString(), tp = j["toPort"].toString();
+    l->setEnds(nodeById(j["from"].toInt()), portFromKey(fp), nodeById(j["to"].toInt()), portFromKey(tp),
+               fp == QLatin1String("auto"), tp == QLatin1String("auto"));
 }
 
 void ChartScene::removeChartItem(int id) {
@@ -314,10 +315,10 @@ void ChartScene::setItemText(ChartItem* item, const QString& text) {
     push(tr("Edit text"), before, capture({item->id}));
 }
 
-void ChartScene::reconnectLink(LinkItem* link, bool sourceEnd, NodeItem* node, Port port) {
+void ChartScene::reconnectLink(LinkItem* link, bool sourceEnd, NodeItem* node, Port port, bool autoPort) {
     const States before = capture({link->id});
-    if (sourceEnd) link->setEnds(node, port, link->to, link->toPort);
-    else link->setEnds(link->from, link->fromPort, node, port);
+    if (sourceEnd) link->setEnds(node, port, link->to, link->toPort, autoPort, link->toAuto);
+    else link->setEnds(link->from, link->fromPort, node, port, link->fromAuto, autoPort);
     push(tr("Reconnect link"), before, capture({link->id}));
 }
 
@@ -448,6 +449,13 @@ void ChartScene::beginLinkDrag(NodeItem* n, Port p) {
     pen.setCosmetic(true);
     m_preview = addPath(QPainterPath(), pen);
     m_preview->setZValue(1e6);
+    setLinkDragging(true);
+}
+
+void ChartScene::setLinkDragging(bool on) {
+    if (linkDragging == on) return;
+    linkDragging = on;
+    update();
 }
 
 void ChartScene::moveLinkDrag(QPointF pos) {
@@ -460,6 +468,7 @@ void ChartScene::moveLinkDrag(QPointF pos) {
 void ChartScene::cancelLinkDrag() {
     m_linkSrc = nullptr;
     delete std::exchange(m_preview, nullptr);
+    setLinkDragging(false);
 }
 
 void ChartScene::endLinkDrag(QPointF pos) {
@@ -475,8 +484,10 @@ void ChartScene::endLinkDrag(QPointF pos) {
 
     QList<int> created;
     Port targetPort;
+    bool targetAuto = false;
     if (target) {
-        targetPort = target->nearestPort(pos);
+        targetPort = target->dropPort(pos, a);
+        targetAuto = target->hitCenter(pos);
     } else {
         // Quick-connect: make a copy of the source shape (empty text) where the drag ended,
         // or one step away in the arrow's direction when the arrow was just clicked.
@@ -501,7 +512,7 @@ void ChartScene::endLinkDrag(QPointF pos) {
                              {"from", src->id},
                              {"fromPort", portKey(port)},
                              {"to", target->id},
-                             {"toPort", portKey(targetPort)},
+                             {"toPort", targetAuto ? QStringLiteral("auto") : portKey(targetPort)},
                              {"style", styleToJson(defaultLinkStyle())}});
     created << linkId;
     States before;

@@ -21,6 +21,8 @@ public:
     bool overlaysHidden = false;  // true while rendering exports, thumbnails and the minimap
     bool snapEnabled = true;
     QVector<QLineF> guides;       // smart alignment guides, drawn by the view
+    bool linkDragging = false;    // a link end is being dragged: nodes show their center anchor
+    void setLinkDragging(bool on);
 
     // Document
     QJsonObject toJson() const;
@@ -33,7 +35,7 @@ public:
     NodeItem* addNode(FlowShape s, QPointF center);
     void deleteSelected();
     void setItemText(ChartItem* item, const QString& text);
-    void reconnectLink(LinkItem* link, bool sourceEnd, NodeItem* node, Port port);
+    void reconnectLink(LinkItem* link, bool sourceEnd, NodeItem* node, Port port, bool autoPort = false);
     void editSelected(const QString& mergeKey, const std::function<void(ChartItem*)>& fn);
     QJsonObject copySelection() const;
     void paste(const QJsonObject& clip, QPointF offset);

@@ -70,6 +70,10 @@ Port NodeItem::nearestPort(QPointF scenePos) const {
     return best;
 }
 
+bool NodeItem::hitCenter(QPointF scenePos) const {
+    return QLineF(mapFromScene(scenePos), QPointF()).length() <= 14 * uiUnit();
+}
+
 void NodeItem::setFromJson(const QJsonObject& j) {
     shapeType = shapeFromKey(j["shape"].toString());
     size = QSizeF(std::clamp(j["w"].toDouble(140), kMinSize, 20000.0), std::clamp(j["h"].toDouble(70), kMinSize, 20000.0));
@@ -243,6 +247,13 @@ void NodeItem::paint(QPainter* p, const QStyleOptionGraphicsItem* opt, QWidget*)
             for (int i = 0; i < 4; ++i) p->drawRect(handleRect(i));
         }
     }
+    if (c->linkDragging) {  // center anchor: drop here to attach on the side facing the other end
+        QPen ring(kAccent, 1.5);
+        ring.setCosmetic(true);
+        p->setPen(ring);
+        p->setBrush(QColor(kAccent.red(), kAccent.green(), kAccent.blue(), 60));
+        p->drawEllipse(QPointF(), 7 * u, 7 * u);
+    }
     if (showArrows()) {
         p->setPen(Qt::NoPen);
         p->setBrush(QColor(kAccent.red(), kAccent.green(), kAccent.blue(), 200));
@@ -343,10 +354,10 @@ LinkItem::~LinkItem() {
     if (to) to->links.removeOne(this);
 }
 
-void LinkItem::setEnds(NodeItem* f, Port fp, NodeItem* t, Port tp) {
+void LinkItem::setEnds(NodeItem* f, Port fp, NodeItem* t, Port tp, bool fAuto, bool tAuto) {
     if (from) from->links.removeOne(this);
     if (to) to->links.removeOne(this);
-    from = f, to = t, fromPort = fp, toPort = tp;
+    from = f, to = t, fromPort = fp, toPort = tp, fromAuto = fAuto, toAuto = tAuto;
     if (from) from->links << this;
     if (to && to != from) to->links << this;
     refresh();
@@ -356,9 +367,9 @@ QJsonObject LinkItem::toJson() const {
     return {{"kind", "link"},
             {"id", id},
             {"from", from ? from->id : 0},
-            {"fromPort", portKey(fromPort)},
+            {"fromPort", fromAuto ? QStringLiteral("auto") : portKey(fromPort)},
             {"to", to ? to->id : 0},
-            {"toPort", portKey(toPort)},
+            {"toPort", toAuto ? QStringLiteral("auto") : portKey(toPort)},
             {"text", text},
             {"style", styleToJson(style)}};
 }
@@ -420,6 +431,10 @@ QPolygonF LinkItem::route(QPointF a, Port pa, QPointF b, Port pb) {
 }
 
 void LinkItem::refresh() {
+    if (from && to) {  // auto ends face the other end: its port, or its center when it is auto too
+        if (fromAuto) fromPort = from->nearestPort(toAuto ? to->scenePos() : to->portScenePos(toPort));
+        if (toAuto) toPort = to->nearestPort(from->portScenePos(fromPort));
+    }
     setPoints(from && to ? route(from->portScenePos(fromPort), fromPort, to->portScenePos(toPort), toPort)
                          : QPolygonF());
 }
@@ -496,6 +511,7 @@ void LinkItem::mousePressEvent(QGraphicsSceneMouseEvent* e) {
     if (e->button() == Qt::LeftButton) {
         if (const int end = hitEnd(e->pos()); end >= 0) {
             m_dragEnd = end;
+            chart()->setLinkDragging(true);
             return e->accept();
         }
     }
@@ -510,7 +526,7 @@ void LinkItem::mouseMoveEvent(QGraphicsSceneMouseEvent* e) {
     const QPointF a = fixed->portScenePos(fixedPort), p = e->scenePos();
     QPolygonF pts;
     if (auto* n = chart()->nodeAt(p, fixed)) {
-        const Port np = n->nearestPort(p);
+        const Port np = n->dropPort(p, a);
         pts = route(a, fixedPort, n->portScenePos(np), np);
     } else {
         const QPointF d = a - p;  // loose end: approach from the fixed end's side
@@ -525,9 +541,12 @@ void LinkItem::mouseMoveEvent(QGraphicsSceneMouseEvent* e) {
 void LinkItem::mouseReleaseEvent(QGraphicsSceneMouseEvent* e) {
     if (m_dragEnd < 0) return ChartItem::mouseReleaseEvent(e);
     const int end = std::exchange(m_dragEnd, -1);
+    chart()->setLinkDragging(false);
     NodeItem* fixed = end == 0 ? to : from;
     if (auto* n = fixed ? chart()->nodeAt(e->scenePos(), fixed) : nullptr)
-        chart()->reconnectLink(this, end == 0, n, n->nearestPort(e->scenePos()));
+        chart()->reconnectLink(this, end == 0, n,
+                               n->dropPort(e->scenePos(), fixed->portScenePos(end == 0 ? toPort : fromPort)),
+                               n->hitCenter(e->scenePos()));
     else
         refresh();  // dropped on empty canvas or its own other end: snap back
 }

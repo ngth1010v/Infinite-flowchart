@@ -51,6 +51,10 @@ public:
     QRectF textRect() const { return isContainer(shapeType) ? containerHeader(shapeType, rect()) : rect(); }
     QPointF portScenePos(Port p) const { return mapToScene(m_ports[int(p)]); }
     Port nearestPort(QPointF scenePos) const;
+    bool hitCenter(QPointF scenePos) const;  // on the center anchor shown while a link is dragged
+    // Port for a link end dropped at `drop`: on the center anchor, the side facing `other`
+    // (the link's opposite end); elsewhere, the side nearest the drop point.
+    Port dropPort(QPointF drop, QPointF other) const { return nearestPort(hitCenter(drop) ? other : drop); }
     bool hitBody(QPointF scenePos) const { return m_outline.contains(mapFromScene(scenePos)); }
 
     void setFromJson(const QJsonObject& j);
@@ -102,8 +106,11 @@ public:
     NodeItem* to = nullptr;
     Port fromPort = Port::Bottom;
     Port toPort = Port::Top;
+    // Auto ends were dropped on the center anchor: refresh() re-picks their side to face the other end.
+    bool fromAuto = false;
+    bool toAuto = false;
 
-    void setEnds(NodeItem* f, Port fp, NodeItem* t, Port tp);
+    void setEnds(NodeItem* f, Port fp, NodeItem* t, Port tp, bool fAuto = false, bool tAuto = false);
     QJsonObject toJson() const override;
     void refresh() override;
     const QPolygonF& points() const { return m_pts; }
