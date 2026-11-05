@@ -48,7 +48,7 @@ void ShapePalette::rebuildIcons(const QColor& line) {
         r.moveCenter(QPointF(22, 15));
         p.setPen(QPen(line, 1.3));
         p.setBrush(Qt::NoBrush);
-        if (s != FlowShape::Annotation) p.drawPath(shapeOutline(s, r));
+        p.drawPath(shapeOutline(s, r));
         p.drawPath(shapeDecoration(s, r));
         p.end();
         auto* it = new QListWidgetItem(QIcon(pm), m_compact ? QString() : shapeName(s));

@@ -238,6 +238,23 @@ QList<ChartItem*> ChartScene::selectedChartItems() const {
 
 NodeItem* ChartScene::nodeById(int id) const { return qgraphicsitem_cast<NodeItem*>(m_items.value(id)); }
 
+// ponytail: membership is geometric (center inside), so no parent ids are stored in the file.
+// A container dragged over loose shapes picks them up on the next drag; store explicit
+// membership if that turns out to annoy users.
+QList<NodeItem*> ChartScene::contents(const NodeItem* container) const {
+    QList<NodeItem*> out;
+    if (!isContainer(container->shapeType)) return out;
+    const QRectF box = container->mapRectToScene(container->rect());
+    const double area = container->size.width() * container->size.height();
+    for (auto* it : items(box, Qt::IntersectsItemBoundingRect)) {
+        auto* n = qgraphicsitem_cast<NodeItem*>(it);
+        if (!n || n == container || !box.contains(n->pos())) continue;
+        if (isContainer(n->shapeType) && n->size.width() * n->size.height() >= area) continue;  // its parent
+        out << n;
+    }
+    return out;
+}
+
 NodeItem* ChartScene::nodeAt(QPointF scenePos, const NodeItem* exclude) const {
     for (auto* it : items(scenePos))
         if (auto* n = qgraphicsitem_cast<NodeItem*>(it); n && n != exclude && n->hitBody(scenePos)) return n;
@@ -320,7 +337,13 @@ QJsonObject ChartScene::copySelection() const {
     QSet<int> nodeIds;
     QJsonArray nodes, links;
     for (auto* c : selectedChartItems())
-        if (auto* n = qgraphicsitem_cast<NodeItem*>(c)) nodeIds << n->id, nodes << n->toJson();
+        if (auto* n = qgraphicsitem_cast<NodeItem*>(c)) {
+            nodeIds << n->id;
+            for (auto* inner : contents(n)) nodeIds << inner->id;  // a copied container brings its shapes
+        }
+    QList<int> sorted = nodeIds.values();
+    std::sort(sorted.begin(), sorted.end());  // keep relative stacking order on paste
+    for (int id : sorted) nodes << nodeById(id)->toJson();
     for (int id : nodeIds)
         for (auto* l : std::as_const(nodeById(id)->links))
             if (l->from->id == id && nodeIds.contains(l->to->id)) links << l->toJson();
@@ -490,17 +513,28 @@ void ChartScene::endLinkDrag(QPointF pos) {
 
 // ---------------------------------------------------------------- move / resize undo
 
+void ChartScene::moveContents(NodeItem* container, QPointF delta) {
+    for (auto* n : m_riders.value(container)) n->moveBy(delta.x(), delta.y());
+}
+
 void ChartScene::mousePressEvent(QGraphicsSceneMouseEvent* e) {
     QGraphicsScene::mousePressEvent(e);
     m_pressIds.clear();
+    m_riders.clear();
+    QSet<NodeItem*> moving;
     for (auto* c : selectedChartItems())
-        if (c->type() == NodeItem::Type) m_pressIds << c->id;
+        if (auto* n = qgraphicsitem_cast<NodeItem*>(c)) m_pressIds << n->id, moving << n;
+    // Selected containers carry the unselected shapes inside them (each shape carried once).
+    for (auto* n : QSet<NodeItem*>(moving))
+        for (auto* r : contents(n))
+            if (!moving.contains(r)) m_riders[n] << r, moving << r, m_pressIds << r->id;
     m_pressState = capture(m_pressIds);
 }
 
 void ChartScene::mouseReleaseEvent(QGraphicsSceneMouseEvent* e) {
     QGraphicsScene::mouseReleaseEvent(e);
     setGuides({});
+    m_riders.clear();
     const States after = capture(std::exchange(m_pressIds, {}));
     for (const auto& j : after)
         if (j.isEmpty()) return;  // an item vanished mid-drag; nothing sensible to record

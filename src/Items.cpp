@@ -91,6 +91,8 @@ void NodeItem::refresh() {
     m_outline = shapeOutline(shapeType, r);
     m_deco = shapeDecoration(shapeType, r);
     for (int i = 0; i < 4; ++i) m_ports[i] = shapePort(shapeType, r, Port(i));
+    // Containers sit under links (-1) and shapes (0); bigger ones lower, so nested ones stay visible.
+    setZValue(isContainer(shapeType) ? -2 - size.width() * size.height() * 1e-9 : 0);
     update();
     for (auto* l : std::as_const(links)) l->refresh();
 }
@@ -102,13 +104,22 @@ void NodeItem::startEdit() {
     ed->document()->setDocumentMargin(0);
     ed->setFont(styleFont(style));
     ed->setDefaultTextColor(style.text);
-    ed->setTextWidth(std::max(10.0, size.width() - 16));
+    // Containers edit their title in the header band; the horizontal one's title runs bottom-to-top.
+    const bool rotated = shapeType == FlowShape::HContainer;
+    const QRectF band = textRect();
+    ed->setTextWidth(std::max(10.0, (rotated ? band.height() : band.width()) - 16));
+    if (rotated) ed->setRotation(-90);
     QTextOption opt = ed->document()->defaultTextOption();
     opt.setAlignment(style.align);
     ed->document()->setDefaultTextOption(opt);
     ed->setPlainText(text);
     ed->setTextInteractionFlags(Qt::TextEditorInteraction);
-    auto place = [this, ed] { ed->setPos(rect().left() + 8, -ed->boundingRect().height() / 2); };
+    auto place = [this, ed, rotated] {
+        const QRectF b = textRect();
+        const double eh = ed->boundingRect().height();
+        if (rotated) ed->setPos(b.center().x() - eh / 2, b.bottom() - 8);
+        else ed->setPos(b.left() + 8, b.center().y() - eh / 2);
+    };
     QObject::connect(ed->document(), &QTextDocument::contentsChanged, ed, place);
     place();
     QTextCursor c(ed->document());
@@ -189,8 +200,13 @@ void NodeItem::paint(QPainter* p, const QStyleOptionGraphicsItem* opt, QWidget*)
                          ? QPen(Qt::NoPen)
                          : QPen(style.stroke, style.strokeWidth, style.dash, Qt::FlatCap, Qt::MiterJoin);
     p->setBrush(style.fill);
-    p->setPen(shapeType == FlowShape::Annotation ? QPen(Qt::NoPen) : pen);
+    p->setPen(pen);
     p->drawPath(m_outline);
+    if (isContainer(shapeType)) {
+        QColor band = style.stroke;
+        band.setAlpha(28);
+        p->fillRect(textRect(), band);
+    }
     if (!m_deco.isEmpty()) {
         p->setBrush(Qt::NoBrush);
         p->setPen(pen);
@@ -200,7 +216,17 @@ void NodeItem::paint(QPainter* p, const QStyleOptionGraphicsItem* opt, QWidget*)
     if (!m_editor && !text.isEmpty() && lod * style.fontSize >= 4) {
         p->setPen(style.text);
         p->setFont(styleFont(style));
-        p->drawText(rect().adjusted(8, 4, -8, -4), int(style.align) | Qt::AlignVCenter | Qt::TextWordWrap, text);
+        const QRectF tr = textRect();
+        const int flags = int(style.align) | Qt::AlignVCenter | Qt::TextWordWrap;
+        if (shapeType == FlowShape::HContainer) {  // title reads bottom-to-top in the left band
+            p->save();
+            p->translate(tr.center());
+            p->rotate(-90);
+            p->drawText(QRectF(-tr.height() / 2 + 8, -tr.width() / 2, tr.height() - 16, tr.width()), flags, text);
+            p->restore();
+        } else {
+            p->drawText(tr.adjusted(8, 4, -8, -4), flags, text);
+        }
     }
 
     const auto* c = chart();
@@ -228,10 +254,14 @@ void NodeItem::paint(QPainter* p, const QStyleOptionGraphicsItem* opt, QWidget*)
 }
 
 QVariant NodeItem::itemChange(GraphicsItemChange change, const QVariant& value) {
-    if (change == ItemPositionChange && m_mode == Mode::None && chart() && chart()->mouseGrabberItem())
+    // Snap only shapes the user drags; shapes carried along inside a container keep their offsets.
+    if (change == ItemPositionChange && m_mode == Mode::None && isSelected() && chart() && chart()->mouseGrabberItem())
         return chart()->adjustDrag(this, value.toPointF());
-    if (change == ItemPositionHasChanged)
+    if (change == ItemPositionHasChanged) {
         for (auto* l : std::as_const(links)) l->refresh();
+        if (m_mode == Mode::None && isContainer(shapeType) && chart()) chart()->moveContents(this, pos() - m_prevPos);
+        m_prevPos = pos();
+    }
     return QGraphicsItem::itemChange(change, value);
 }
 

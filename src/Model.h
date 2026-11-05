@@ -12,7 +12,7 @@ inline constexpr char kClipMime[] = "application/x-flowx";
 enum class FlowShape {
     Terminator, Process, Decision, InputOutput, PredefinedProcess, Document, MultiDocument,
     ManualInput, ManualOperation, Preparation, Connector, OffPageConnector, Database, StoredData,
-    Delay, Display, LoopLimit, Annotation, Merge, Extract, Sort, Collate, SummingJunction, Or,
+    Delay, Display, LoopLimit, HContainer, VContainer,
     Count
 };
 
@@ -25,6 +25,11 @@ QSizeF shapeDefaultSize(FlowShape s);
 QPainterPath shapeOutline(FlowShape s, const QRectF& r);     // closed: filled, stroked, hit-tested
 QPainterPath shapeDecoration(FlowShape s, const QRectF& r);  // extra inner lines, stroked only
 QPointF shapePort(FlowShape s, const QRectF& r, Port p);     // where a link attaches, on the outline
+
+// Containers (swimlanes) hold the shapes whose center lies inside them.
+inline constexpr double kContainerHeader = 40;
+bool isContainer(FlowShape s);
+QRectF containerHeader(FlowShape s, const QRectF& r);  // title band: left for HContainer, top for VContainer
 
 QPointF portDir(Port p);
 QString portKey(Port p);

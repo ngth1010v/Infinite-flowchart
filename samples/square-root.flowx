@@ -164,29 +164,6 @@
    }
   },
   {
-   "id": 8,
-   "shape": "annotation",
-   "x": -260,
-   "y": 240,
-   "w": 170,
-   "h": 60,
-   "text": "Only positive\ninputs allowed",
-   "style": {
-    "fill": "#00000000",
-    "stroke": "#ff475569",
-    "text": "#ff1f2430",
-    "strokeWidth": 1.5,
-    "dash": 1,
-    "font": "Segoe UI",
-    "fontSize": 14,
-    "bold": false,
-    "italic": false,
-    "align": "left",
-    "arrowStart": false,
-    "arrowEnd": true
-   }
-  },
-  {
    "id": 9,
    "shape": "database",
    "x": -260,

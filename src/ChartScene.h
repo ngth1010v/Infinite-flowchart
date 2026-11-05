@@ -42,12 +42,14 @@ public:
     QList<ChartItem*> selectedChartItems() const;
     NodeItem* nodeById(int id) const;
     NodeItem* nodeAt(QPointF scenePos, const NodeItem* exclude = nullptr) const;  // hit by shape body
+    QList<NodeItem*> contents(const NodeItem* container) const;  // shapes whose center is inside it
     bool isEditingText() const;
     double viewScale() const;
     QPointF snap(QPointF p, Qt::KeyboardModifiers mods = {}) const;
 
     // Used by NodeItem during mouse interaction
     QPointF adjustDrag(NodeItem* n, QPointF pos);
+    void moveContents(NodeItem* container, QPointF delta);
     void beginLinkDrag(NodeItem* n, Port p);
     void moveLinkDrag(QPointF pos);
     void endLinkDrag(QPointF pos);
@@ -64,6 +66,7 @@ private:
     int m_nextId = 1;
     QList<int> m_pressIds;
     States m_pressState;
+    QHash<NodeItem*, QList<NodeItem*>> m_riders;  // during a drag: container -> shapes it carries
     NodeItem* m_linkSrc = nullptr;
     Port m_linkPort = Port::Bottom;
     QGraphicsPathItem* m_preview = nullptr;

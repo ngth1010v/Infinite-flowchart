@@ -4,6 +4,7 @@
 #include "ChartView.h"
 #include <QApplication>
 #include <QTest>
+#include <QJsonArray>
 #include <QWheelEvent>
 #include <cmath>
 #include <cstdio>
@@ -144,6 +145,40 @@ int main(int argc, char** argv) {
         QTest::mouseMove(vp3, at3({300, 260}));
         QTest::mouseRelease(vp3, Qt::LeftButton, {}, at3({300, 260}));
         CHECK(l->from == r && l->to == q);
+    }
+
+    // Containers: dragging one carries the shapes inside it; undo restores both.
+    {
+        ChartScene s4;
+        ChartView v4(&s4);
+        v4.resize(1200, 800);
+        v4.show();
+        CHECK(QTest::qWaitForWindowExposed(&v4));
+        v4.resetView();
+        QWidget* vp4 = v4.viewport();
+        auto at4 = [&](QPointF s) { return v4.mapFromScene(s); };
+        auto* box = s4.addNode(FlowShape::HContainer, {0, 0});  // 640x220, title band x in [-320, -280]
+        auto* inner = s4.addNode(FlowShape::Process, {100, 0});
+        auto* outside = s4.addNode(FlowShape::Process, {0, 300});
+        CHECK(box->zValue() < inner->zValue());  // shapes draw on top of containers
+        CHECK(s4.contents(box) == QList<NodeItem*>{inner});
+        s4.clearSelection();
+
+        QTest::mousePress(vp4, Qt::LeftButton, {}, at4({-300, 0}));
+        CHECK(box->isSelected());
+        QTest::mouseMove(vp4, at4({-280, 20}));
+        QTest::mouseMove(vp4, at4({-250, 30}));
+        QTest::mouseRelease(vp4, Qt::LeftButton, {}, at4({-250, 30}));
+        CHECK(box->pos() == QPointF(50, 30));
+        CHECK(inner->pos() == QPointF(150, 30));
+        CHECK(outside->pos() == QPointF(0, 300));
+        s4.undoStack()->undo();
+        CHECK(box->pos() == QPointF(0, 0) && inner->pos() == QPointF(100, 0));
+
+        // Copying a container copies what is inside it.
+        s4.clearSelection();
+        box->setSelected(true);
+        CHECK(s4.copySelection()["nodes"].toArray().size() == 2);
     }
 
     // Side panels resizing/moving the view must not move the chart on screen.

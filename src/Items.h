@@ -48,6 +48,7 @@ public:
     QList<LinkItem*> links;
 
     QRectF rect() const { return {-size.width() / 2, -size.height() / 2, size.width(), size.height()}; }
+    QRectF textRect() const { return isContainer(shapeType) ? containerHeader(shapeType, rect()) : rect(); }
     QPointF portScenePos(Port p) const { return mapToScene(m_ports[int(p)]); }
     Port nearestPort(QPointF scenePos) const;
     bool hitBody(QPointF scenePos) const { return m_outline.contains(mapFromScene(scenePos)); }
@@ -78,6 +79,7 @@ private:
     QPainterPath m_outline, m_deco;
     QPointF m_ports[4];
     QPointF m_fixedCorner;
+    QPointF m_prevPos;  // to know how far a container moved, so its contents follow
     TextEditor* m_editor = nullptr;
 
     bool showHandles() const;

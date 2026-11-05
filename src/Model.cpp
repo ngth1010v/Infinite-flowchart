@@ -30,13 +30,8 @@ const ShapeInfo kShapes[] = {
     {"delay", "Delay", 120, 70},
     {"display", "Display", 150, 70},
     {"looplimit", "Loop Limit", 140, 60},
-    {"annotation", "Comment / Annotation", 150, 60},
-    {"merge", "Merge", 80, 60},
-    {"extract", "Extract", 80, 60},
-    {"sort", "Sort", 80, 90},
-    {"collate", "Collate", 70, 90},
-    {"summing", "Summing Junction", 50, 50},
-    {"or", "Or", 50, 50},
+    {"hcontainer", "Horizontal Container", 640, 220},
+    {"vcontainer", "Vertical Container", 260, 480},
 };
 static_assert(std::size(kShapes) == size_t(FlowShape::Count));
 
@@ -90,11 +85,11 @@ QPainterPath shapeOutline(FlowShape s, const QRectF& r) {
     }
     case FlowShape::Process:
     case FlowShape::PredefinedProcess:
-    case FlowShape::Annotation:
+    case FlowShape::HContainer:
+    case FlowShape::VContainer:
         p.addRect(r);
         return p;
     case FlowShape::Decision:
-    case FlowShape::Sort:
         return poly({{cx, t}, {rt, cy}, {cx, b}, {l, cy}});
     case FlowShape::InputOutput: {
         const double k = w * 0.15;
@@ -120,8 +115,6 @@ QPainterPath shapeOutline(FlowShape s, const QRectF& r) {
         return poly({{l + k, t}, {rt - k, t}, {rt, cy}, {rt - k, b}, {l + k, b}, {l, cy}});
     }
     case FlowShape::Connector:
-    case FlowShape::SummingJunction:
-    case FlowShape::Or:
         p.addEllipse(r);
         return p;
     case FlowShape::OffPageConnector:
@@ -169,12 +162,6 @@ QPainterPath shapeOutline(FlowShape s, const QRectF& r) {
         const double k = std::min(w, h) * 0.25;
         return poly({{l + k, t}, {rt - k, t}, {rt, t + k}, {rt, b}, {l, b}, {l, t + k}});
     }
-    case FlowShape::Merge:
-        return poly({{l, t}, {rt, t}, {cx, b}});
-    case FlowShape::Extract:
-        return poly({{cx, t}, {rt, b}, {l, b}});
-    case FlowShape::Collate:
-        return poly({{l, t}, {rt, t}, {l, b}, {rt, b}});
     case FlowShape::Count:
         break;
     }
@@ -208,32 +195,18 @@ QPainterPath shapeDecoration(FlowShape s, const QRectF& r) {
         p.arcTo(top, 180, 180);
         break;
     }
-    case FlowShape::Annotation: {
-        const double k = std::min(w * 0.1, 14.0);
-        p.moveTo(l + k, t);
-        p.lineTo(l, t);
-        p.lineTo(l, b);
-        p.lineTo(l + k, b);
+    case FlowShape::HContainer:
+    case FlowShape::VContainer: {
+        const QRectF hd = containerHeader(s, r);  // line between title band and body
+        if (s == FlowShape::HContainer) {
+            p.moveTo(hd.right(), t);
+            p.lineTo(hd.right(), b);
+        } else {
+            p.moveTo(l, hd.bottom());
+            p.lineTo(rt, hd.bottom());
+        }
         break;
     }
-    case FlowShape::Sort:
-        p.moveTo(l, cy);
-        p.lineTo(rt, cy);
-        break;
-    case FlowShape::SummingJunction: {
-        const double dx = w / 2 * M_SQRT1_2, dy = h / 2 * M_SQRT1_2;
-        p.moveTo(cx - dx, cy - dy);
-        p.lineTo(cx + dx, cy + dy);
-        p.moveTo(cx + dx, cy - dy);
-        p.lineTo(cx - dx, cy + dy);
-        break;
-    }
-    case FlowShape::Or:
-        p.moveTo(cx, t);
-        p.lineTo(cx, b);
-        p.moveTo(l, cy);
-        p.lineTo(rt, cy);
-        break;
     default:
         break;
     }
@@ -265,9 +238,8 @@ Port portFromKey(const QString& key) {
 QPointF shapePort(FlowShape s, const QRectF& r, Port p) {
     const QPointF c = r.center(), d = portDir(p);
     const QPointF mid = c + QPointF(d.x() * r.width() / 2, d.y() * r.height() / 2);
-    if (s == FlowShape::Annotation) return mid;
     const QPainterPath path = shapeOutline(s, r);
-    if (!path.contains(c + d)) return mid;  // e.g. Collate's waist: no inside along that axis
+    if (!path.contains(c + d)) return mid;  // degenerate (tiny) shape
     // Binary search along the ray from the center for the outline crossing.
     double lo = 0, hi = std::max(r.width(), r.height());
     for (int i = 0; i < 24; ++i) {
@@ -277,11 +249,18 @@ QPointF shapePort(FlowShape s, const QRectF& r, Port p) {
     return c + d * lo;
 }
 
+bool isContainer(FlowShape s) { return s == FlowShape::HContainer || s == FlowShape::VContainer; }
+
+QRectF containerHeader(FlowShape s, const QRectF& r) {
+    if (s == FlowShape::HContainer) return {r.left(), r.top(), std::min(kContainerHeader, r.width()), r.height()};
+    return {r.left(), r.top(), r.width(), std::min(kContainerHeader, r.height())};
+}
+
 Style defaultNodeStyle(FlowShape s) {
     Style st;
-    if (s == FlowShape::Annotation) {
-        st.fill = Qt::transparent;
-        st.align = Qt::AlignLeft;
+    if (isContainer(s)) {
+        st.fill = QColor(248, 250, 252, 200);  // light, slightly see-through so the grid still shows
+        st.bold = true;
     }
     return st;
 }
