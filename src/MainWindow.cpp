@@ -100,7 +100,7 @@ MainWindow::MainWindow() {
     setCentralWidget(m_stack);
 
     m_zoomLabel = new QLabel;
-    statusBar()->addWidget(new QLabel(tr("Ctrl+wheel: zoom   ·   Right-drag / Space-drag: pan   ·   Ctrl+R: fit   ·   "
+    statusBar()->addWidget(new QLabel(tr("Wheel: zoom   ·   Right-drag / Space-drag / Shift+wheel: pan   ·   Ctrl+R: fit   ·   "
                                          "Alt while dragging: no snap   ·   Hover a shape and drag an arrow to connect")));
     statusBar()->addPermanentWidget(m_zoomLabel);
 

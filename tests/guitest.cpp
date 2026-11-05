@@ -84,9 +84,18 @@ int main(int argc, char** argv) {
     scene.undoStack()->undo();
     CHECK(a->pos() == QPointF(0, 0));
 
-    // Ctrl+wheel zooms within limits; fit shows everything.
+    // Plain wheel zooms around the cursor; the point under it stays put.
+    {
+        const QPoint m = vp->rect().center() + QPoint(150, 80);
+        const QPointF under = view.mapToScene(m);
+        QWheelEvent out(m, vp->mapToGlobal(m), {}, {0, -120}, Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase, false);
+        QApplication::sendEvent(vp, &out);
+        CHECK(view.zoom() < 0.9);
+        CHECK(QLineF(view.mapToScene(m), under).length() < 2 / view.zoom());
+    }
+    // Wheel zoom stops at the limit; fit shows everything.
     const QPoint c = vp->rect().center();
-    QWheelEvent wheel(c, vp->mapToGlobal(c), {}, {0, 120 * 40}, Qt::NoButton, Qt::ControlModifier, Qt::NoScrollPhase, false);
+    QWheelEvent wheel(c, vp->mapToGlobal(c), {}, {0, 120 * 40}, Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase, false);
     QApplication::sendEvent(vp, &wheel);
     CHECK(std::abs(view.zoom() - ChartView::kMaxZoom) < 1e-6);
     view.fitAll();

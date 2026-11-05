@@ -20,8 +20,8 @@ Open a chart directly: `Flowchart.exe path\to\chart.flowx`. Example: `samples\sq
 | Edit text | Double-click a shape (Enter = done, Shift+Enter = new line, Esc = cancel); double-click a link for its label |
 | Resize | Select one shape, drag a corner handle |
 | Style | Right panel opens when something is selected; with several selected, edits apply to all |
-| Zoom | Ctrl+wheel, Ctrl+= / Ctrl+-, Ctrl+0 = 100%, Ctrl+R = fit whole chart (2%–5000%) |
-| Pan | Right-drag, middle-drag, Space+drag, wheel / Shift+wheel |
+| Zoom | Mouse wheel (around the cursor), Ctrl+= / Ctrl+-, Ctrl+0 = 100%, Ctrl+R = fit whole chart (2%–5000%) |
+| Pan | Right-drag, middle-drag, Space+drag, Shift+wheel (sideways) |
 | Snap | Grid + alignment guides while dragging; hold Alt to place freely; toggle in View menu |
 | Edit | Ctrl+Z / Ctrl+Y, Ctrl+C / X / V, Ctrl+D duplicate, Delete, Ctrl+A |
 | File | Ctrl+N, Ctrl+O, Ctrl+S, Ctrl+Shift+S, Ctrl+E export PNG/SVG/PDF, Ctrl+W back to home |

@@ -209,15 +209,13 @@ void ChartView::drawForeground(QPainter* p, const QRectF&) {
 // ---------------------------------------------------------------- input
 
 void ChartView::wheelEvent(QWheelEvent* e) {
-    if (e->modifiers() & Qt::ControlModifier) {
-        zoomBy(std::pow(1.0015, e->angleDelta().y()));
-        return e->accept();
-    }
+    // Wheel zooms around the cursor; Shift+wheel scrolls sideways.
     if (e->modifiers() & Qt::ShiftModifier) {
         horizontalScrollBar()->setValue(horizontalScrollBar()->value() - e->angleDelta().y());
         return e->accept();
     }
-    QGraphicsView::wheelEvent(e);
+    zoomBy(std::pow(1.0015, e->angleDelta().y()));
+    e->accept();
 }
 
 void ChartView::mousePressEvent(QMouseEvent* e) {
