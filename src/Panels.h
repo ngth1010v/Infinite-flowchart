@@ -21,6 +21,7 @@ class ShapePalette : public QListWidget {
 public:
     explicit ShapePalette(QWidget* parent = nullptr);
     void rebuildIcons(const QColor& line);
+    void setCompact(bool compact);  // icons only
 
 signals:
     void shapeClicked(FlowShape s);
@@ -28,6 +29,9 @@ signals:
 protected:
     QStringList mimeTypes() const override;
     QMimeData* mimeData(const QList<QListWidgetItem*>& items) const override;
+
+private:
+    bool m_compact = false;
 };
 
 // Right side: style of the selected nodes/links. Fields where the selection differs show blank.

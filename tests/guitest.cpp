@@ -101,6 +101,40 @@ int main(int argc, char** argv) {
     scene.undoStack()->undo();
     CHECK(scene.itemCount() == 4);
 
+    // Side panels resizing/moving the view must not move the chart on screen.
+    {
+        QWidget page;
+        auto* left = new QWidget(&page);
+        auto* right = new QWidget(&page);
+        ChartView v2(&scene, &page);
+        auto layout = [&](int lw, int rw) {
+            left->setGeometry(0, 0, lw, 600);
+            v2.setGeometry(lw, 0, 1000 - lw - rw, 600);
+            right->setGeometry(1000 - rw, 0, rw, 600);
+        };
+        page.resize(1000, 600);
+        layout(230, 0);
+        page.show();
+        CHECK(QTest::qWaitForWindowExposed(&page));
+        v2.centerOn(a->pos());
+        const QPoint before = v2.viewport()->mapTo(&page, v2.mapFromScene(a->pos()));
+        for (int rw : {100, 300}) layout(230, rw);  // right panel slides open
+        for (int lw : {150, 72}) layout(lw, 300);   // left panel collapses
+        const QPoint after = v2.viewport()->mapTo(&page, v2.mapFromScene(a->pos()));
+        CHECK((after - before).manhattanLength() <= 1);
+    }
+
+    // Right-button drag pans the canvas.
+    {
+        const QPointF start = view.mapToScene(vp->rect().center());
+        const QPoint c0 = vp->rect().center();
+        QTest::mousePress(vp, Qt::RightButton, {}, c0);
+        QTest::mouseMove(vp, c0 + QPoint(120, 40));
+        QTest::mouseRelease(vp, Qt::RightButton, {}, c0 + QPoint(120, 40));
+        const QPointF moved = view.mapToScene(vp->rect().center());
+        CHECK(std::abs((start - moved).x() * view.zoom() - 120) < 2);
+    }
+
     std::printf("OK  gui interactions\n");
     return 0;
 }

@@ -1,6 +1,7 @@
 #pragma once
 #include <QMainWindow>
 #include <QTimer>
+#include <QVariantAnimation>
 #include <functional>
 
 class ChartScene;
@@ -9,6 +10,7 @@ class HomeScreen;
 class QLabel;
 class QScrollArea;
 class QStackedWidget;
+class QToolButton;
 class ShapePalette;
 class StylePanel;
 
@@ -31,6 +33,11 @@ private:
     ShapePalette* m_palette;
     StylePanel* m_panel;
     QScrollArea* m_panelScroll;
+    QWidget* m_paletteBox;
+    QToolButton* m_paletteToggle;
+    QVariantAnimation m_leftAnim, m_rightAnim;  // slide the side panels open/closed
+    QTimer m_panelTimer;
+    bool m_paletteCollapsed = false;
     QLabel* m_zoomLabel;
     QList<QAction*> m_chartActions;
     QString m_path;
@@ -54,6 +61,8 @@ private:
     void copy();
     void paste();
     void applyTheme(bool dark);
+    void setPaletteCollapsed(bool collapsed, bool animate = true);
+    void updatePanelVisibility();
     void updateTitle();
     void autosave();
     QString autosavePath() const;

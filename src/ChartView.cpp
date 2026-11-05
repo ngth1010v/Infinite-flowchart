@@ -88,7 +88,7 @@ ChartView::ChartView(ChartScene* scene, QWidget* parent) : QGraphicsView(scene, 
     setDragMode(RubberBandDrag);
     setRubberBandSelectionMode(Qt::IntersectsItemShape);
     setTransformationAnchor(AnchorUnderMouse);
-    setResizeAnchor(AnchorViewCenter);
+    setResizeAnchor(NoAnchor);  // see keepContentInPlace()
     setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     setFrameShape(QFrame::NoFrame);
@@ -221,7 +221,7 @@ void ChartView::wheelEvent(QWheelEvent* e) {
 }
 
 void ChartView::mousePressEvent(QMouseEvent* e) {
-    if (e->button() == Qt::MiddleButton) {
+    if (e->button() == Qt::MiddleButton || e->button() == Qt::RightButton) {
         m_panning = true;
         m_lastPan = e->pos();
         viewport()->setCursor(Qt::ClosedHandCursor);
@@ -242,7 +242,7 @@ void ChartView::mouseMoveEvent(QMouseEvent* e) {
 }
 
 void ChartView::mouseReleaseEvent(QMouseEvent* e) {
-    if (e->button() == Qt::MiddleButton && m_panning) {
+    if ((e->button() == Qt::MiddleButton || e->button() == Qt::RightButton) && m_panning) {
         m_panning = false;
         viewport()->unsetCursor();
         return e->accept();
@@ -304,8 +304,27 @@ void ChartView::dropEvent(QDropEvent* e) {
     setFocus();
 }
 
+// Side panels opening/closing resize and move the view. Shift the scroll position by however far
+// the viewport moved inside the window, so the chart stays put on screen instead of jumping.
+void ChartView::keepContentInPlace() {
+    const QPoint pos = viewport()->mapTo(window(), QPoint(0, 0));
+    if (m_hasWindowPos) {
+        const QPoint d = pos - m_windowPos;
+        horizontalScrollBar()->setValue(horizontalScrollBar()->value() + d.x());
+        verticalScrollBar()->setValue(verticalScrollBar()->value() + d.y());
+    }
+    m_windowPos = pos;
+    m_hasWindowPos = true;
+}
+
+void ChartView::moveEvent(QMoveEvent* e) {
+    QGraphicsView::moveEvent(e);
+    keepContentInPlace();
+}
+
 void ChartView::resizeEvent(QResizeEvent* e) {
     QGraphicsView::resizeEvent(e);
+    keepContentInPlace();
     m_minimap->move(width() - m_minimap->width() - 12, height() - m_minimap->height() - 12);
     m_minimap->raise();
 }

@@ -42,6 +42,7 @@ protected:
     void dragMoveEvent(QDragMoveEvent* e) override;
     void dropEvent(QDropEvent* e) override;
     void resizeEvent(QResizeEvent* e) override;
+    void moveEvent(QMoveEvent* e) override;
     void scrollContentsBy(int dx, int dy) override;
 
 private:
@@ -49,8 +50,11 @@ private:
     bool m_dark = false;
     bool m_panning = false;
     QPoint m_lastPan;
+    QPoint m_windowPos;  // viewport top-left in window coords, to keep content still when side panels slide
+    bool m_hasWindowPos = false;
     QColor m_bg, m_gridMinor, m_gridMajor;
 
     void endSpacePan();
     void viewChanged();
+    void keepContentInPlace();
 };

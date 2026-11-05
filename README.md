@@ -19,11 +19,11 @@ Open a chart directly: `Flowchart.exe path\to\chart.flowx`. Example: `samples\sq
 | Resize | Select one shape, drag a corner handle |
 | Style | Right panel opens when something is selected; with several selected, edits apply to all |
 | Zoom | Ctrl+wheel, Ctrl+= / Ctrl+-, Ctrl+0 = 100%, Ctrl+R = fit whole chart (2%–5000%) |
-| Pan | Wheel / Shift+wheel, middle-drag, or hold Space and drag |
+| Pan | Right-drag, middle-drag, Space+drag, wheel / Shift+wheel |
 | Snap | Grid + alignment guides while dragging; hold Alt to place freely; toggle in View menu |
 | Edit | Ctrl+Z / Ctrl+Y, Ctrl+C / X / V, Ctrl+D duplicate, Delete, Ctrl+A |
 | File | Ctrl+N, Ctrl+O, Ctrl+S, Ctrl+Shift+S, Ctrl+E export PNG/SVG/PDF, Ctrl+W back to home |
-| View | Ctrl+M minimap, View > Dark theme |
+| View | Ctrl+B shape panel icons-only, Ctrl+M minimap, View > Dark theme |
 
 Unsaved work is autosaved every 30 s to `%APPDATA%\Flowchart\Flowchart\autosave.flowx`
 and offered for recovery after a crash.

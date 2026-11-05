@@ -26,9 +26,11 @@
 #include <QStatusBar>
 #include <QStyle>
 #include <QStyleHints>
+#include <QToolButton>
 #include <QUndoStack>
 
 namespace {
+constexpr int kPaletteOpen = 230, kPaletteClosed = 72, kPanelOpen = 300;
 const QString kFilter = QObject::tr("Flowchart (*.flowx)");
 
 // Hide selection/hover decorations while rendering to an image or file.
@@ -45,30 +47,49 @@ MainWindow::MainWindow() {
     m_view = new ChartView(m_scene);
 
     m_palette = new ShapePalette;
-    auto* paletteBox = new QWidget;
-    paletteBox->setFixedWidth(230);
-    auto* pl = new QVBoxLayout(paletteBox);
-    pl->setContentsMargins(10, 10, 4, 4);
-    auto* shapesLabel = new QLabel(tr("Shapes"));
-    QFont sf = shapesLabel->font();
-    sf.setBold(true);
-    shapesLabel->setFont(sf);
-    pl->addWidget(shapesLabel);
+    m_paletteBox = new QWidget;
+    m_paletteBox->setFixedWidth(kPaletteOpen);
+    auto* pl = new QVBoxLayout(m_paletteBox);
+    pl->setContentsMargins(6, 4, 2, 4);
+    pl->setSpacing(2);
+    m_paletteToggle = new QToolButton;
+    m_paletteToggle->setAutoRaise(true);
+    m_paletteToggle->setToolTip(tr("Show/hide shape names (Ctrl+B)"));
+    connect(m_paletteToggle, &QToolButton::clicked, this, [this] { setPaletteCollapsed(!m_paletteCollapsed); });
+    pl->addWidget(m_paletteToggle, 0, Qt::AlignRight);
     pl->addWidget(m_palette, 1);
 
     m_panel = new StylePanel(m_scene);
     m_panelScroll = new QScrollArea;
     m_panelScroll->setWidget(m_panel);
     m_panelScroll->setWidgetResizable(true);
-    m_panelScroll->setFixedWidth(300);
+    m_panelScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     m_panelScroll->setFrameShape(QFrame::NoFrame);
+    m_panel->setMinimumWidth(kPanelOpen - 16);  // content keeps its width and is clipped while sliding
+    m_panelScroll->setFixedWidth(0);
     m_panelScroll->hide();
+
+    for (auto* a : {&m_leftAnim, &m_rightAnim}) {
+        a->setDuration(180);
+        a->setEasingCurve(QEasingCurve::OutCubic);
+    }
+    connect(&m_leftAnim, &QVariantAnimation::valueChanged, this,
+            [this](const QVariant& v) { m_paletteBox->setFixedWidth(v.toInt()); });
+    connect(&m_leftAnim, &QVariantAnimation::finished, this, [this] { m_palette->setCompact(m_paletteCollapsed); });
+    connect(&m_rightAnim, &QVariantAnimation::valueChanged, this, [this](const QVariant& v) {
+        m_panelScroll->setFixedWidth(v.toInt());
+        m_panelScroll->setVisible(v.toInt() > 0);
+    });
+    // Selection often changes in two steps (clear, then select); decide once both are done.
+    m_panelTimer.setSingleShot(true);
+    m_panelTimer.setInterval(0);
+    connect(&m_panelTimer, &QTimer::timeout, this, &MainWindow::updatePanelVisibility);
 
     m_chartPage = new QWidget;
     auto* h = new QHBoxLayout(m_chartPage);
     h->setContentsMargins(0, 0, 0, 0);
     h->setSpacing(0);
-    h->addWidget(paletteBox);
+    h->addWidget(m_paletteBox);
     h->addWidget(m_view, 1);
     h->addWidget(m_panelScroll);
 
@@ -79,7 +100,7 @@ MainWindow::MainWindow() {
     setCentralWidget(m_stack);
 
     m_zoomLabel = new QLabel;
-    statusBar()->addWidget(new QLabel(tr("Ctrl+wheel: zoom   ·   Space / middle drag: pan   ·   Ctrl+R: fit   ·   "
+    statusBar()->addWidget(new QLabel(tr("Ctrl+wheel: zoom   ·   Right-drag / Space-drag: pan   ·   Ctrl+R: fit   ·   "
                                          "Alt while dragging: no snap   ·   Hover a shape and drag an arrow to connect")));
     statusBar()->addPermanentWidget(m_zoomLabel);
 
@@ -94,8 +115,7 @@ MainWindow::MainWindow() {
         m_scene->addNode(s, m_view->visibleCenter());
         m_view->setFocus();
     });
-    connect(m_scene, &QGraphicsScene::selectionChanged, this,
-            [this] { m_panelScroll->setVisible(!m_scene->selectedChartItems().isEmpty()); });
+    connect(m_scene, &QGraphicsScene::selectionChanged, &m_panelTimer, qOverload<>(&QTimer::start));
     connect(m_scene->undoStack(), &QUndoStack::cleanChanged, this, &MainWindow::updateTitle);
     connect(m_view, &ChartView::zoomChanged, this,
             [this](double z) { m_zoomLabel->setText(QStringLiteral("%1%").arg(qRound(z * 100))); });
@@ -105,6 +125,7 @@ MainWindow::MainWindow() {
     m_autosave.start();
 
     applyTheme(QSettings().value("dark", false).toBool());
+    setPaletteCollapsed(QSettings().value("paletteCollapsed", false).toBool(), false);
     showHome();
 }
 
@@ -175,6 +196,8 @@ void MainWindow::buildMenus() {
         m_view->setMinimapVisible(on);
         QSettings().setValue("minimap", on);
     });
+    makeAction(view, tr("Shape panel: icons only"), {QKeySequence(Qt::CTRL | Qt::Key_B)},
+               [this] { setPaletteCollapsed(!m_paletteCollapsed); });
     view->addSeparator();
     auto* dark = makeAction(view, tr("&Dark theme"), {}, [] {}, false);
     dark->setCheckable(true);
@@ -189,6 +212,8 @@ bool MainWindow::onChart() const { return m_stack->currentWidget() == m_chartPag
 void MainWindow::showHome() {
     m_stack->setCurrentWidget(m_home);
     for (auto* a : std::as_const(m_chartActions)) a->setEnabled(false);
+    m_rightAnim.stop();
+    m_panelScroll->setFixedWidth(0);
     m_panelScroll->hide();
     m_zoomLabel->clear();
     statusBar()->hide();
@@ -426,4 +451,34 @@ void MainWindow::applyTheme(bool dark) {
     m_palette->rebuildIcons(QApplication::palette().color(QPalette::Text));
     QSettings().setValue("dark", dark);
     if (!onChart()) m_home->refresh();
+}
+
+// ---------------------------------------------------------------- side panels
+
+void MainWindow::setPaletteCollapsed(bool collapsed, bool animate) {
+    m_paletteCollapsed = collapsed;
+    QSettings().setValue("paletteCollapsed", collapsed);
+    m_paletteToggle->setText(collapsed ? QStringLiteral("»") : QStringLiteral("«"));
+    if (!collapsed) m_palette->setCompact(false);  // names back before growing; removed after shrinking
+    const int to = collapsed ? kPaletteClosed : kPaletteOpen;
+    m_leftAnim.stop();
+    if (!animate) {
+        m_paletteBox->setFixedWidth(to);
+        m_palette->setCompact(collapsed);
+        return;
+    }
+    m_leftAnim.setStartValue(m_paletteBox->width());
+    m_leftAnim.setEndValue(to);
+    m_leftAnim.start();
+}
+
+void MainWindow::updatePanelVisibility() {
+    const int to = onChart() && !m_scene->selectedChartItems().isEmpty() ? kPanelOpen : 0;
+    if (m_rightAnim.state() == QAbstractAnimation::Running ? m_rightAnim.endValue().toInt() == to
+                                                            : m_panelScroll->width() == to)
+        return;
+    m_rightAnim.stop();
+    m_rightAnim.setStartValue(m_panelScroll->width());
+    m_rightAnim.setEndValue(to);
+    m_rightAnim.start();
 }

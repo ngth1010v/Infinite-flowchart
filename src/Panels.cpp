@@ -25,6 +25,7 @@ ShapePalette::ShapePalette(QWidget* parent) : QListWidget(parent) {
     setSelectionMode(SingleSelection);
     setFrameShape(QFrame::NoFrame);
     setSpacing(1);
+    setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     connect(this, &QListWidget::itemClicked, this, [this](QListWidgetItem* it) {
         emit shapeClicked(FlowShape(it->data(Qt::UserRole).toInt()));
         clearSelection();
@@ -50,11 +51,17 @@ void ShapePalette::rebuildIcons(const QColor& line) {
         if (s != FlowShape::Annotation) p.drawPath(shapeOutline(s, r));
         p.drawPath(shapeDecoration(s, r));
         p.end();
-        auto* it = new QListWidgetItem(QIcon(pm), shapeName(s));
+        auto* it = new QListWidgetItem(QIcon(pm), m_compact ? QString() : shapeName(s));
         it->setData(Qt::UserRole, i);
-        it->setToolTip(tr("Drag onto the canvas, or click to add at the center"));
+        it->setToolTip(shapeName(s) + '\n' + tr("Drag onto the canvas, or click to add at the center"));
         addItem(it);
     }
+}
+
+void ShapePalette::setCompact(bool compact) {
+    m_compact = compact;
+    for (int i = 0; i < count(); ++i)
+        item(i)->setText(compact ? QString() : shapeName(FlowShape(item(i)->data(Qt::UserRole).toInt())));
 }
 
 QStringList ShapePalette::mimeTypes() const { return {QString::fromLatin1(kShapeMime)}; }
