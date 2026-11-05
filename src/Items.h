@@ -51,10 +51,8 @@ public:
     QRectF textRect() const { return isContainer(shapeType) ? containerHeader(shapeType, rect()) : rect(); }
     QPointF portScenePos(Port p) const { return mapToScene(m_ports[int(p)]); }
     Port nearestPort(QPointF scenePos) const;
-    bool hitCenter(QPointF scenePos) const;  // on the center anchor shown while a link is dragged
-    // Port for a link end dropped at `drop`: on the center anchor, the side facing `other`
-    // (the link's opposite end); elsewhere, the side nearest the drop point.
-    Port dropPort(QPointF drop, QPointF other) const { return nearestPort(hitCenter(drop) ? other : drop); }
+    // Anchor shown while a link end is dragged near this node: 0-3 = side Port, 4 = center, -1 = none.
+    int hitAnchor(QPointF scenePos) const;
     bool hitBody(QPointF scenePos) const { return m_outline.contains(mapFromScene(scenePos)); }
 
     void setFromJson(const QJsonObject& j);

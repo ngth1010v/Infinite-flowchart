@@ -70,8 +70,12 @@ Port NodeItem::nearestPort(QPointF scenePos) const {
     return best;
 }
 
-bool NodeItem::hitCenter(QPointF scenePos) const {
-    return QLineF(mapFromScene(scenePos), QPointF()).length() <= 14 * uiUnit();
+int NodeItem::hitAnchor(QPointF scenePos) const {
+    const QPointF p = mapFromScene(scenePos);
+    if (QLineF(p, QPointF()).length() <= 14 * uiUnit()) return 4;
+    for (int i = 0; i < 4; ++i)
+        if (QLineF(p, m_ports[i]).length() <= 12 * uiUnit()) return i;
+    return -1;
 }
 
 void NodeItem::setFromJson(const QJsonObject& j) {
@@ -247,12 +251,16 @@ void NodeItem::paint(QPainter* p, const QStyleOptionGraphicsItem* opt, QWidget*)
             for (int i = 0; i < 4; ++i) p->drawRect(handleRect(i));
         }
     }
-    if (c->linkDragging) {  // center anchor: drop here to attach on the side facing the other end
+    if (c->linkTarget == this) {  // anchors for the link end being dragged; the one under the cursor pops
         QPen ring(kAccent, 1.5);
         ring.setCosmetic(true);
         p->setPen(ring);
-        p->setBrush(QColor(kAccent.red(), kAccent.green(), kAccent.blue(), 60));
-        p->drawEllipse(QPointF(), 7 * u, 7 * u);
+        for (int i = 0; i < 5; ++i) {
+            const bool hot = c->linkAnchor == i;
+            p->setBrush(QColor(kAccent.red(), kAccent.green(), kAccent.blue(), hot ? 230 : 70));
+            const double r = (hot ? 9 : 6) * u;
+            p->drawEllipse(i < 4 ? m_ports[i] : QPointF(), r, r);
+        }
     }
     if (showArrows()) {
         p->setPen(Qt::NoPen);
@@ -511,7 +519,6 @@ void LinkItem::mousePressEvent(QGraphicsSceneMouseEvent* e) {
     if (e->button() == Qt::LeftButton) {
         if (const int end = hitEnd(e->pos()); end >= 0) {
             m_dragEnd = end;
-            chart()->setLinkDragging(true);
             return e->accept();
         }
     }
@@ -524,10 +531,11 @@ void LinkItem::mouseMoveEvent(QGraphicsSceneMouseEvent* e) {
     NodeItem* fixed = m_dragEnd == 0 ? to : from;
     const Port fixedPort = m_dragEnd == 0 ? toPort : fromPort;
     const QPointF a = fixed->portScenePos(fixedPort), p = e->scenePos();
+    const auto drop = chart()->linkDropAt(p, a, fixed);
+    chart()->setLinkTarget(drop.shown, drop.anchor);
     QPolygonF pts;
-    if (auto* n = chart()->nodeAt(p, fixed)) {
-        const Port np = n->dropPort(p, a);
-        pts = route(a, fixedPort, n->portScenePos(np), np);
+    if (drop.node) {
+        pts = route(a, fixedPort, drop.node->portScenePos(drop.port), drop.port);
     } else {
         const QPointF d = a - p;  // loose end: approach from the fixed end's side
         const Port lp = std::abs(d.x()) > std::abs(d.y()) ? (d.x() > 0 ? Port::Right : Port::Left)
@@ -541,12 +549,12 @@ void LinkItem::mouseMoveEvent(QGraphicsSceneMouseEvent* e) {
 void LinkItem::mouseReleaseEvent(QGraphicsSceneMouseEvent* e) {
     if (m_dragEnd < 0) return ChartItem::mouseReleaseEvent(e);
     const int end = std::exchange(m_dragEnd, -1);
-    chart()->setLinkDragging(false);
+    chart()->setLinkTarget(nullptr);
     NodeItem* fixed = end == 0 ? to : from;
-    if (auto* n = fixed ? chart()->nodeAt(e->scenePos(), fixed) : nullptr)
-        chart()->reconnectLink(this, end == 0, n,
-                               n->dropPort(e->scenePos(), fixed->portScenePos(end == 0 ? toPort : fromPort)),
-                               n->hitCenter(e->scenePos()));
+    const auto drop = fixed ? chart()->linkDropAt(e->scenePos(), fixed->portScenePos(end == 0 ? toPort : fromPort), fixed)
+                            : ChartScene::LinkDrop{};
+    if (drop.node)
+        chart()->reconnectLink(this, end == 0, drop.node, drop.port, drop.autoPort);
     else
         refresh();  // dropped on empty canvas or its own other end: snap back
 }

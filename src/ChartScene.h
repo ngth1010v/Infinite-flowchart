@@ -21,8 +21,21 @@ public:
     bool overlaysHidden = false;  // true while rendering exports, thumbnails and the minimap
     bool snapEnabled = true;
     QVector<QLineF> guides;       // smart alignment guides, drawn by the view
-    bool linkDragging = false;    // a link end is being dragged: nodes show their center anchor
-    void setLinkDragging(bool on);
+    NodeItem* linkTarget = nullptr;  // while a link end is dragged: the node showing its anchors
+    int linkAnchor = -1;             // linkTarget's anchor under the cursor (see NodeItem::hitAnchor)
+    void setLinkTarget(NodeItem* n, int anchor = -1);
+
+    // Where a link end dragged to `pos` goes. `shown` is the nearest shape (not `exclude`), whose
+    // anchors are drawn; `node` is what the end attaches to (null: empty canvas). `other` is the
+    // link's opposite end, which the center anchor turns to face.
+    struct LinkDrop {
+        NodeItem* shown = nullptr;
+        int anchor = -1;
+        NodeItem* node = nullptr;
+        Port port = Port::Top;
+        bool autoPort = false;
+    };
+    LinkDrop linkDropAt(QPointF pos, QPointF other, const NodeItem* exclude) const;
 
     // Document
     QJsonObject toJson() const;

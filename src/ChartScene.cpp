@@ -210,6 +210,7 @@ void ChartScene::removeChartItem(int id) {
     if (auto* n = qgraphicsitem_cast<NodeItem*>(c)) {
         n->cancelEdit();
         if (m_linkSrc == n) cancelLinkDrag();
+        if (linkTarget == n) linkTarget = nullptr;
         for (auto* l : QList<LinkItem*>(n->links)) removeChartItem(l->id);
     }
     delete c;  // also removes it from the scene
@@ -449,18 +450,46 @@ void ChartScene::beginLinkDrag(NodeItem* n, Port p) {
     pen.setCosmetic(true);
     m_preview = addPath(QPainterPath(), pen);
     m_preview->setZValue(1e6);
-    setLinkDragging(true);
 }
 
-void ChartScene::setLinkDragging(bool on) {
-    if (linkDragging == on) return;
-    linkDragging = on;
-    update();
+void ChartScene::setLinkTarget(NodeItem* n, int anchor) {
+    if (n == linkTarget && anchor == linkAnchor) return;
+    if (linkTarget) linkTarget->update();
+    linkTarget = n, linkAnchor = anchor;
+    if (n) n->update();
+}
+
+ChartScene::LinkDrop ChartScene::linkDropAt(QPointF pos, QPointF other, const NodeItem* exclude) const {
+    LinkDrop d;
+    // Nearest shape by distance to its box, within reach. Containers only win when no plain shape
+    // is in reach, so the shapes inside a swimlane stay easy to hit. Ties go to the topmost.
+    const double reach = 60 / std::max(viewScale(), 0.5);
+    double best = 2 * reach;
+    const QRectF area(pos - QPointF(reach, reach), pos + QPointF(reach, reach));
+    for (auto* it : items(area, Qt::IntersectsItemBoundingRect)) {
+        auto* n = qgraphicsitem_cast<NodeItem*>(it);
+        if (!n || n == exclude) continue;
+        const QPointF p = n->mapFromScene(pos);
+        const QRectF r = n->rect();
+        const double dist = std::hypot(std::max({r.left() - p.x(), 0.0, p.x() - r.right()}),
+                                       std::max({r.top() - p.y(), 0.0, p.y() - r.bottom()}));
+        const double score = dist + (isContainer(n->shapeType) ? reach : 0);
+        if (dist < reach && score < best) best = score, d.shown = n;
+    }
+    if (d.shown) d.anchor = d.shown->hitAnchor(pos);
+    d.node = d.anchor >= 0 ? d.shown : nodeAt(pos, exclude);
+    if (!d.node) return d;
+    const int a = d.node == d.shown ? d.anchor : -1;
+    d.autoPort = a == 4;
+    d.port = a >= 0 && a < 4 ? Port(a) : d.node->nearestPort(d.autoPort ? other : pos);
+    return d;
 }
 
 void ChartScene::moveLinkDrag(QPointF pos) {
     if (!m_preview || !m_linkSrc) return;
     QPainterPath path(m_linkSrc->portScenePos(m_linkPort));
+    const LinkDrop d = linkDropAt(pos, path.currentPosition(), m_linkSrc);
+    setLinkTarget(d.shown, d.anchor);
     path.lineTo(pos);
     m_preview->setPath(path);
 }
@@ -468,7 +497,7 @@ void ChartScene::moveLinkDrag(QPointF pos) {
 void ChartScene::cancelLinkDrag() {
     m_linkSrc = nullptr;
     delete std::exchange(m_preview, nullptr);
-    setLinkDragging(false);
+    setLinkTarget(nullptr);
 }
 
 void ChartScene::endLinkDrag(QPointF pos) {
@@ -479,16 +508,14 @@ void ChartScene::endLinkDrag(QPointF pos) {
 
     const QPointF a = src->portScenePos(port);
     const bool click = QLineF(a, pos).length() < 20;
-    NodeItem* target = nodeAt(pos, src);
+    const LinkDrop drop = linkDropAt(pos, a, src);
+    NodeItem* target = drop.node;
     if (!target && !click && src->hitBody(pos)) return;  // dropped back on its own node
 
     QList<int> created;
-    Port targetPort;
-    bool targetAuto = false;
-    if (target) {
-        targetPort = target->dropPort(pos, a);
-        targetAuto = target->hitCenter(pos);
-    } else {
+    Port targetPort = drop.port;
+    const bool targetAuto = drop.autoPort;
+    if (!target) {
         // Quick-connect: make a copy of the source shape (empty text) where the drag ended,
         // or one step away in the arrow's direction when the arrow was just clicked.
         QPointF center = pos;

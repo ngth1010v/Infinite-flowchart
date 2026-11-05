@@ -71,6 +71,10 @@ int main(int argc, char** argv) {
         sc.beginLinkDrag(p, Port::Right);
         sc.endLinkDrag(q->pos() + QPointF(0, -40));  // off-center, near the top: top side as before
         CHECK(q->links.size() == 2 && q->links[1]->toPort == Port::Top);
+        // Side anchors reach a little past the outline: a drop just outside the left corner connects.
+        const auto d = sc.linkDropAt(q->portScenePos(Port::Left) - QPointF(8, 0), p->pos(), p);
+        CHECK(d.shown == q && d.node == q && d.anchor == int(Port::Left) && d.port == Port::Left);
+        CHECK(sc.linkDropAt({400, 300}, p->pos(), p).shown == nullptr);  // nothing in reach
     }
     // Clicking an arrow (no drag) adds a connected copy of the shape.
     s.beginLinkDrag(b, Port::Right);
