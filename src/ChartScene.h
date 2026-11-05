@@ -33,6 +33,7 @@ public:
     NodeItem* addNode(FlowShape s, QPointF center);
     void deleteSelected();
     void setItemText(ChartItem* item, const QString& text);
+    void reconnectLink(LinkItem* link, bool sourceEnd, NodeItem* node, Port port);
     void editSelected(const QString& mergeKey, const std::function<void(ChartItem*)>& fn);
     QJsonObject copySelection() const;
     void paste(const QJsonObject& clip, QPointF offset);
@@ -40,6 +41,7 @@ public:
 
     QList<ChartItem*> selectedChartItems() const;
     NodeItem* nodeById(int id) const;
+    NodeItem* nodeAt(QPointF scenePos, const NodeItem* exclude = nullptr) const;  // hit by shape body
     bool isEditingText() const;
     double viewScale() const;
     QPointF snap(QPointF p, Qt::KeyboardModifiers mods = {}) const;

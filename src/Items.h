@@ -31,6 +31,9 @@ public:
     ChartScene* chart() const;
     virtual QJsonObject toJson() const = 0;
     virtual void refresh() = 0;  // re-derive geometry after changing the fields above
+
+protected:
+    double uiUnit() const;  // scene units per screen pixel, so handles keep a steady on-screen size
 };
 
 class NodeItem : public ChartItem {
@@ -77,7 +80,6 @@ private:
     QPointF m_fixedCorner;
     TextEditor* m_editor = nullptr;
 
-    double uiUnit() const;  // scene units per screen pixel, so handles keep a steady on-screen size
     bool showHandles() const;
     bool showArrows() const;
     QRectF handleRect(int corner) const;
@@ -105,15 +107,25 @@ public:
     const QPolygonF& points() const { return m_pts; }
 
     QRectF boundingRect() const override { return m_bounds; }
-    QPainterPath shape() const override { return m_shape; }
+    QPainterPath shape() const override;
     void paint(QPainter* p, const QStyleOptionGraphicsItem* opt, QWidget* w) override;
 
     static QPolygonF route(QPointF a, Port pa, QPointF b, Port pb);
 
 protected:
+    QVariant itemChange(GraphicsItemChange change, const QVariant& value) override;
+    void hoverMoveEvent(QGraphicsSceneHoverEvent* e) override;
+    void hoverLeaveEvent(QGraphicsSceneHoverEvent* e) override;
+    void mousePressEvent(QGraphicsSceneMouseEvent* e) override;
+    void mouseMoveEvent(QGraphicsSceneMouseEvent* e) override;
+    void mouseReleaseEvent(QGraphicsSceneMouseEvent* e) override;
     void mouseDoubleClickEvent(QGraphicsSceneMouseEvent* e) override;
 
 private:
+    int m_dragEnd = -1;  // end being dragged: 0 = source, 1 = target
+    bool showEndHandles() const;
+    int hitEnd(QPointF pos) const;
+    void setPoints(const QPolygonF& pts);  // rebuild hit shape, label and bounds
     QPolygonF m_pts;
     QPainterPath m_shape;
     QRectF m_bounds, m_label;

@@ -238,6 +238,12 @@ QList<ChartItem*> ChartScene::selectedChartItems() const {
 
 NodeItem* ChartScene::nodeById(int id) const { return qgraphicsitem_cast<NodeItem*>(m_items.value(id)); }
 
+NodeItem* ChartScene::nodeAt(QPointF scenePos, const NodeItem* exclude) const {
+    for (auto* it : items(scenePos))
+        if (auto* n = qgraphicsitem_cast<NodeItem*>(it); n && n != exclude && n->hitBody(scenePos)) return n;
+    return nullptr;
+}
+
 bool ChartScene::isEditingText() const { return dynamic_cast<TextEditor*>(focusItem()) != nullptr; }
 
 double ChartScene::viewScale() const { return views().isEmpty() ? 1.0 : views().first()->transform().m11(); }
@@ -289,6 +295,13 @@ void ChartScene::setItemText(ChartItem* item, const QString& text) {
     item->text = text;
     item->refresh();
     push(tr("Edit text"), before, capture({item->id}));
+}
+
+void ChartScene::reconnectLink(LinkItem* link, bool sourceEnd, NodeItem* node, Port port) {
+    const States before = capture({link->id});
+    if (sourceEnd) link->setEnds(node, port, link->to, link->toPort);
+    else link->setEnds(link->from, link->fromPort, node, port);
+    push(tr("Reconnect link"), before, capture({link->id}));
 }
 
 void ChartScene::editSelected(const QString& mergeKey, const std::function<void(ChartItem*)>& fn) {
@@ -434,12 +447,7 @@ void ChartScene::endLinkDrag(QPointF pos) {
 
     const QPointF a = src->portScenePos(port);
     const bool click = QLineF(a, pos).length() < 20;
-    NodeItem* target = nullptr;
-    for (auto* it : items(pos))
-        if (auto* n = qgraphicsitem_cast<NodeItem*>(it); n && n != src && n->hitBody(pos)) {
-            target = n;
-            break;
-        }
+    NodeItem* target = nodeAt(pos, src);
     if (!target && !click && src->hitBody(pos)) return;  // dropped back on its own node
 
     QList<int> created;

@@ -14,6 +14,7 @@ Open a chart directly: `Flowchart.exe path\to\chart.flowx`. Example: `samples\sq
 |---|---|
 | Add shape | Drag from the left list, or click it (adds at view center) |
 | Connect | Hover a shape, drag one of the 4 blue arrows onto another shape |
+| Reconnect link | Select the link, drag its round end handle onto another shape (drop on empty canvas cancels) |
 | Add connected shape | Click an arrow (or drag it to empty space) |
 | Edit text | Double-click a shape (Enter = done, Shift+Enter = new line, Esc = cancel); double-click a link for its label |
 | Resize | Select one shape, drag a corner handle |

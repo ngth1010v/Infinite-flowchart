@@ -101,6 +101,51 @@ int main(int argc, char** argv) {
     scene.undoStack()->undo();
     CHECK(scene.itemCount() == 4);
 
+    // Reconnect: select a link, drag its target end handle onto another shape.
+    {
+        ChartScene s3;
+        ChartView v3(&s3);
+        v3.resize(1200, 800);
+        v3.show();
+        CHECK(QTest::qWaitForWindowExposed(&v3));
+        v3.resetView();
+        QWidget* vp3 = v3.viewport();
+        auto at3 = [&](QPointF s) { return v3.mapFromScene(s); };
+        auto* p = s3.addNode(FlowShape::Process, {0, 0});
+        auto* q = s3.addNode(FlowShape::Process, {300, 0});
+        auto* r = s3.addNode(FlowShape::Process, {300, 250});
+        s3.beginLinkDrag(p, Port::Right);
+        s3.endLinkDrag({240, 0});  // near q's left side: straight horizontal link
+        LinkItem* l = p->links.value(0);
+        CHECK(l && l->to == q && l->toPort == Port::Left);
+
+        s3.clearSelection();
+        QTest::mouseClick(vp3, Qt::LeftButton, {}, at3({150, 0}));  // middle of the link
+        CHECK(l->isSelected());
+        const QPointF end = l->points().last();
+        QTest::mousePress(vp3, Qt::LeftButton, {}, at3(end));
+        QTest::mouseMove(vp3, at3({300, 200}));
+        QTest::mouseMove(vp3, at3({290, 240}));
+        QTest::mouseRelease(vp3, Qt::LeftButton, {}, at3({290, 240}));
+        CHECK(l->to == r && l->toPort == Port::Top);
+        CHECK(q->links.isEmpty() && r->links.size() == 1);
+        s3.undoStack()->undo();
+        CHECK(l->to == q && r->links.isEmpty());
+
+        // Dropping the end on empty canvas changes nothing.
+        const int steps = s3.undoStack()->index();
+        QTest::mousePress(vp3, Qt::LeftButton, {}, at3(l->points().last()));
+        QTest::mouseMove(vp3, at3({500, 500}));
+        QTest::mouseRelease(vp3, Qt::LeftButton, {}, at3({600, 600}));
+        CHECK(l->to == q && s3.undoStack()->index() == steps);
+
+        // Dragging the source end works the same way.
+        QTest::mousePress(vp3, Qt::LeftButton, {}, at3(l->points().first()));
+        QTest::mouseMove(vp3, at3({300, 260}));
+        QTest::mouseRelease(vp3, Qt::LeftButton, {}, at3({300, 260}));
+        CHECK(l->from == r && l->to == q);
+    }
+
     // Side panels resizing/moving the view must not move the chart on screen.
     {
         QWidget page;

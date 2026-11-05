@@ -21,6 +21,11 @@ constexpr double kMinSize = 20;
 
 ChartScene* ChartItem::chart() const { return static_cast<ChartScene*>(scene()); }
 
+double ChartItem::uiUnit() const {
+    const double s = chart() ? chart()->viewScale() : 1.0;
+    return 1.0 / std::max(s, 0.5);
+}
+
 // ---------------------------------------------------------------- TextEditor
 
 void TextEditor::focusOutEvent(QFocusEvent* e) {
@@ -128,10 +133,6 @@ void NodeItem::cancelEdit() {
     update();
 }
 
-double NodeItem::uiUnit() const {
-    const double s = chart() ? chart()->viewScale() : 1.0;
-    return 1.0 / std::max(s, 0.5);
-}
 
 bool NodeItem::showHandles() const {
     const auto* c = chart();
@@ -303,7 +304,8 @@ void NodeItem::mouseDoubleClickEvent(QGraphicsSceneMouseEvent* e) {
 
 LinkItem::LinkItem() {
     setFlags(ItemIsSelectable);
-    setZValue(-1);  // links stay under nodes
+    setAcceptHoverEvents(true);
+    setZValue(-1);  // links stay under nodes (raised while selected, see itemChange)
 }
 
 LinkItem::~LinkItem() {
@@ -388,20 +390,24 @@ QPolygonF LinkItem::route(QPointF a, Port pa, QPointF b, Port pb) {
 }
 
 void LinkItem::refresh() {
+    setPoints(from && to ? route(from->portScenePos(fromPort), fromPort, to->portScenePos(toPort), toPort)
+                         : QPolygonF());
+}
+
+void LinkItem::setPoints(const QPolygonF& pts) {
     prepareGeometryChange();
-    m_pts.clear();
+    m_pts = pts;
     m_shape = QPainterPath();
     m_label = QRectF();
     m_bounds = QRectF();
-    if (!from || !to) return;
-    m_pts = route(from->portScenePos(fromPort), fromPort, to->portScenePos(toPort), toPort);
+    if (m_pts.size() < 2) return;
     QPainterPath path;
     path.addPolygon(m_pts);
     QPainterPathStroker stroker;
     stroker.setWidth(std::max(10.0, style.strokeWidth + 8));
     m_shape = stroker.createStroke(path);
     m_shape.setFillRule(Qt::WindingFill);
-    if (!text.isEmpty() && m_pts.size() >= 2) {
+    if (!text.isEmpty()) {
         int best = 0;
         double bestLen = -1;
         for (int i = 0; i + 1 < m_pts.size(); ++i) {
@@ -413,9 +419,87 @@ void LinkItem::refresh() {
         m_label = QRectF(mid - QPointF(ts.width() / 2, ts.height() / 2), ts);
         m_shape.addRect(m_label);
     }
-    const double a = arrowSize() + 6;
+    const double a = std::max(arrowSize() + 6, 20.0);  // also room for the end handles
     m_bounds = m_shape.boundingRect().adjusted(-a, -a, a, a);
     update();
+}
+
+// ---- dragging an end onto another shape (reconnect)
+
+bool LinkItem::showEndHandles() const {
+    const auto* c = chart();
+    return isSelected() && c && !c->overlaysHidden && m_pts.size() >= 2;
+}
+
+int LinkItem::hitEnd(QPointF pos) const {
+    if (!showEndHandles()) return -1;
+    const double r = 9 * uiUnit();
+    if (QLineF(pos, m_pts.first()).length() <= r) return 0;
+    if (QLineF(pos, m_pts.last()).length() <= r) return 1;
+    return -1;
+}
+
+QPainterPath LinkItem::shape() const {
+    QPainterPath p = m_shape;
+    if (showEndHandles()) {
+        const double r = 9 * uiUnit();
+        p.addEllipse(m_pts.first(), r, r);
+        p.addEllipse(m_pts.last(), r, r);
+    }
+    return p;
+}
+
+QVariant LinkItem::itemChange(GraphicsItemChange change, const QVariant& value) {
+    // A selected link sits above nodes so its end handles (on node edges) can be grabbed.
+    if (change == ItemSelectedHasChanged) setZValue(value.toBool() ? 1 : -1);
+    return ChartItem::itemChange(change, value);
+}
+
+void LinkItem::hoverMoveEvent(QGraphicsSceneHoverEvent* e) {
+    if (hitEnd(e->pos()) >= 0) setCursor(Qt::CrossCursor);
+    else unsetCursor();
+}
+
+void LinkItem::hoverLeaveEvent(QGraphicsSceneHoverEvent*) { unsetCursor(); }
+
+void LinkItem::mousePressEvent(QGraphicsSceneMouseEvent* e) {
+    if (e->button() == Qt::LeftButton) {
+        if (const int end = hitEnd(e->pos()); end >= 0) {
+            m_dragEnd = end;
+            return e->accept();
+        }
+    }
+    ChartItem::mousePressEvent(e);
+}
+
+void LinkItem::mouseMoveEvent(QGraphicsSceneMouseEvent* e) {
+    if (m_dragEnd < 0 || !from || !to) return ChartItem::mouseMoveEvent(e);
+    // Live preview: route from the fixed end to the shape under the cursor, or to the cursor.
+    NodeItem* fixed = m_dragEnd == 0 ? to : from;
+    const Port fixedPort = m_dragEnd == 0 ? toPort : fromPort;
+    const QPointF a = fixed->portScenePos(fixedPort), p = e->scenePos();
+    QPolygonF pts;
+    if (auto* n = chart()->nodeAt(p, fixed)) {
+        const Port np = n->nearestPort(p);
+        pts = route(a, fixedPort, n->portScenePos(np), np);
+    } else {
+        const QPointF d = a - p;  // loose end: approach from the fixed end's side
+        const Port lp = std::abs(d.x()) > std::abs(d.y()) ? (d.x() > 0 ? Port::Right : Port::Left)
+                                                          : (d.y() > 0 ? Port::Bottom : Port::Top);
+        pts = route(a, fixedPort, p, lp);
+    }
+    if (m_dragEnd == 0) std::reverse(pts.begin(), pts.end());  // points always run source to target
+    setPoints(pts);
+}
+
+void LinkItem::mouseReleaseEvent(QGraphicsSceneMouseEvent* e) {
+    if (m_dragEnd < 0) return ChartItem::mouseReleaseEvent(e);
+    const int end = std::exchange(m_dragEnd, -1);
+    NodeItem* fixed = end == 0 ? to : from;
+    if (auto* n = fixed ? chart()->nodeAt(e->scenePos(), fixed) : nullptr)
+        chart()->reconnectLink(this, end == 0, n, n->nearestPort(e->scenePos()));
+    else
+        refresh();  // dropped on empty canvas or its own other end: snap back
 }
 
 void LinkItem::paint(QPainter* p, const QStyleOptionGraphicsItem* opt, QWidget*) {
@@ -457,6 +541,15 @@ void LinkItem::paint(QPainter* p, const QStyleOptionGraphicsItem* opt, QWidget*)
         p->setPen(style.text);
         p->setFont(styleFont(style));
         p->drawText(m_label, int(style.align) | Qt::AlignVCenter, text);
+    }
+    if (showEndHandles()) {
+        QPen hp(kAccent, 1.5);
+        hp.setCosmetic(true);
+        p->setPen(hp);
+        p->setBrush(Qt::white);
+        const double r = 5 * uiUnit();
+        p->drawEllipse(m_pts.first(), r, r);
+        p->drawEllipse(m_pts.last(), r, r);
     }
 }
 
