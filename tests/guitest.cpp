@@ -65,6 +65,17 @@ int main(int argc, char** argv) {
     scene.undoStack()->undo();
     CHECK(std::abs(a->size.width() - 140) < 0.01);
 
+    // Right edge handle: only the width changes; the left edge stays.
+    QTest::mouseMove(vp, at({70, 0}));
+    QTest::mousePress(vp, Qt::LeftButton, {}, at({70, 0}));
+    QTest::mouseMove(vp, at({90, 20}));
+    QTest::mouseMove(vp, at({130, 40}));
+    QTest::mouseRelease(vp, Qt::LeftButton, {}, at({130, 40}));
+    CHECK(std::abs(a->size.width() - 200) < 0.01 && std::abs(a->size.height() - 70) < 0.01);
+    CHECK(std::abs(a->mapRectToScene(a->rect()).left() + 70) < 0.01);
+    scene.undoStack()->undo();
+    CHECK(std::abs(a->size.width() - 140) < 0.01);
+
     // Double-click edits text inline; Enter commits.
     QTest::mouseDClick(vp, Qt::LeftButton, {}, at({-30, 0}));
     CHECK(scene.isEditingText());

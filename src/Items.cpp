@@ -214,11 +214,13 @@ bool NodeItem::showArrows() const {
     return m_hover && c && !c->overlaysHidden && !m_editor && m_mode != Mode::Resize && c->viewScale() >= 0.5;
 }
 
-QRectF NodeItem::handleRect(int corner) const {
+QRectF NodeItem::handleRect(int handle) const {
     const QRectF r = rect();
-    const QPointF pts[] = {r.topLeft(), r.topRight(), r.bottomRight(), r.bottomLeft()};
+    // 0-3: corners (resize both ways), 4-7: middle of top, right, bottom, left (resize one way).
+    const QPointF pts[] = {r.topLeft(),  r.topRight(),    r.bottomRight(),  r.bottomLeft(),
+                           {0, r.top()}, {r.right(), 0}, {0, r.bottom()}, {r.left(), 0}};
     const double h = 4 * uiUnit();
-    return {pts[corner] - QPointF(h, h), QSizeF(2 * h, 2 * h)};
+    return {pts[handle] - QPointF(h, h), QSizeF(2 * h, 2 * h)};
 }
 
 QPointF NodeItem::arrowPos(int port) const { return m_ports[port] + portDir(Port(port)) * (18 * uiUnit()); }
@@ -226,7 +228,7 @@ QPointF NodeItem::arrowPos(int port) const { return m_ports[port] + portDir(Port
 int NodeItem::hitHandle(QPointF pos) const {
     if (!showHandles()) return -1;
     const double pad = 2 * uiUnit();
-    for (int i = 0; i < 4; ++i)
+    for (int i = 0; i < kHandles; ++i)
         if (handleRect(i).adjusted(-pad, -pad, pad, pad).contains(pos)) return i;
     return -1;
 }
@@ -261,7 +263,7 @@ QPainterPath NodeItem::shape() const {
         if (showArrows()) p.addRect(rect().adjusted(-z, -z, z, z));  // keep the arrows reachable
     }
     if (showHandles())
-        for (int i = 0; i < 4; ++i) p.addRect(handleRect(i));
+        for (int i = 0; i < kHandles; ++i) p.addRect(handleRect(i));
     return p;
 }
 
@@ -311,7 +313,7 @@ void NodeItem::paint(QPainter* p, const QStyleOptionGraphicsItem* opt, QWidget*)
         p->drawRect(rect().adjusted(-3 * u, -3 * u, 3 * u, 3 * u));
         if (showHandles()) {
             p->setBrush(Qt::white);
-            for (int i = 0; i < 4; ++i) p->drawRect(handleRect(i));
+            for (int i = 0; i < kHandles; ++i) p->drawRect(handleRect(i));
         }
     }
     if (c->linkTarget == this) {  // anchors for the link end being dragged; the one under the cursor pops
@@ -354,7 +356,8 @@ void NodeItem::hoverEnterEvent(QGraphicsSceneHoverEvent*) {
 
 void NodeItem::hoverMoveEvent(QGraphicsSceneHoverEvent* e) {
     if (const int h = hitHandle(e->pos()); h >= 0)
-        setCursor(h % 2 == 0 ? Qt::SizeFDiagCursor : Qt::SizeBDiagCursor);
+        setCursor(h >= 4 ? (h % 2 == 0 ? Qt::SizeVerCursor : Qt::SizeHorCursor)
+                         : (h % 2 == 0 ? Qt::SizeFDiagCursor : Qt::SizeBDiagCursor));
     else if (hitArrow(e->pos()) >= 0)
         setCursor(Qt::CrossCursor);
     else
@@ -372,7 +375,12 @@ void NodeItem::mousePressEvent(QGraphicsSceneMouseEvent* e) {
     if (e->button() == Qt::LeftButton) {
         if (const int h = hitHandle(e->pos()); h >= 0) {
             m_mode = Mode::Resize;
-            m_fixedCorner = mapToScene(handleRect((h + 2) % 4).center());
+            // An edge handle drags the corner at its clockwise start, with one axis held still.
+            const int corner = h % 4;
+            m_fixedCorner = mapToScene(handleRect((corner + 2) % 4).center());
+            m_movingCorner = mapToScene(handleRect(corner).center());
+            m_lockX = h == 4 || h == 6;
+            m_lockY = h == 5 || h == 7;
             e->accept();
             return;
         }
@@ -388,7 +396,9 @@ void NodeItem::mousePressEvent(QGraphicsSceneMouseEvent* e) {
 
 void NodeItem::mouseMoveEvent(QGraphicsSceneMouseEvent* e) {
     if (m_mode == Mode::Resize) {
-        const QPointF m = chart()->snap(e->scenePos(), e->modifiers());
+        QPointF m = chart()->snap(e->scenePos(), e->modifiers());
+        if (m_lockX) m.setX(m_movingCorner.x());
+        if (m_lockY) m.setY(m_movingCorner.y());
         auto atLeast = [](double d) { return std::abs(d) < kMinSize ? (d < 0 ? -kMinSize : kMinSize) : d; };
         const QPointF d(atLeast(m.x() - m_fixedCorner.x()), atLeast(m.y() - m_fixedCorner.y()));
         const QRectF nr = QRectF(m_fixedCorner, m_fixedCorner + d).normalized();

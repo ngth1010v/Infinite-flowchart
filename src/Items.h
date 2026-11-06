@@ -86,12 +86,14 @@ private:
     bool m_hover = false;
     QPainterPath m_outline, m_deco;
     QPointF m_ports[4];
-    QPointF m_fixedCorner;
+    static constexpr int kHandles = 8;  // resize handles: 4 corners, then 4 edge middles
+    QPointF m_fixedCorner, m_movingCorner;
+    bool m_lockX = false, m_lockY = false;  // edge handle: that axis keeps its size
     QPointF m_prevPos;  // to know how far a container moved, so its contents follow
 
     bool showHandles() const;
     bool showArrows() const;
-    QRectF handleRect(int corner) const;
+    QRectF handleRect(int handle) const;
     QPointF arrowPos(int port) const;
     int hitHandle(QPointF pos) const;
     int hitArrow(QPointF pos) const;
