@@ -498,7 +498,7 @@ QPolygonF simplify(const QPolygonF& in) {
 }  // namespace
 
 namespace {
-constexpr double kStub = 20;  // straight run out of a port before the first bend
+constexpr double kStub = LinkItem::kStub;
 constexpr double kPortSlack = 10;  // how far facing ends may slide off their side's center to line up
 
 // Orthogonal polyline a -> stub -> the user's points -> stub -> b. `path` is the user's polyline from

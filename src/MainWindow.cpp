@@ -202,7 +202,7 @@ void MainWindow::buildMenus() {
         m_scene->snapEnabled = on;
         QSettings().setValue("snap", on);
     });
-    auto* minimap = makeAction(view, tr("&Minimap"), {QKeySequence(Qt::CTRL | Qt::Key_M)}, [] {});
+    auto* minimap = makeAction(view, tr("&Minimap"), {}, [] {});
     minimap->setCheckable(true);
     minimap->setChecked(QSettings().value("minimap", true).toBool());
     m_view->setMinimapVisible(minimap->isChecked());
@@ -210,6 +210,11 @@ void MainWindow::buildMenus() {
         m_view->setMinimapVisible(on);
         QSettings().setValue("minimap", on);
     });
+    // Ctrl+M bundles the selected links when only 2+ links are selected; otherwise it toggles the minimap.
+    makeAction(edit, tr("&Bundle selected links / toggle minimap"), {QKeySequence(Qt::CTRL | Qt::Key_M)},
+               [this, minimap] {
+                   if (!m_scene->bundleSelectedLinks()) minimap->toggle();
+               });
     makeAction(view, tr("Shape panel: icons only"), {QKeySequence(Qt::CTRL | Qt::Key_B)},
                [this] { setPaletteCollapsed(!m_paletteCollapsed); });
     // Style panel starts closed every launch and opens only on request, not on selection.

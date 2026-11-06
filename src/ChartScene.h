@@ -52,6 +52,9 @@ public:
     void setLinkPath(LinkItem* link, const QPolygonF& path);
     // Shrink or grow each selected container to wrap the shapes inside it, plus its padding.
     void fitSelectedContainers();
+    // Selection is only links, 2 or more: move their middle segments so they overlap where they
+    // can, moving as little as possible. Returns false (nothing done) for any other selection.
+    bool bundleSelectedLinks();
     void settleLinkPaths();  // see LinkItem::settlePath
     void editSelected(const QString& mergeKey, const std::function<void(ChartItem*)>& fn);
     QJsonObject copySelection() const;

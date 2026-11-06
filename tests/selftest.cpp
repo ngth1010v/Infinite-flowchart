@@ -62,6 +62,36 @@ int main(int argc, char** argv) {
         CHECK(box->toJson()["padding"].toDouble() == 15);  // padding survives undo's reload
     }
 
+    // Ctrl+M: fan-out links from one port get one shared horizontal run; undo restores them.
+    {
+        ChartScene sc;
+        auto* src = sc.addNode(FlowShape::Process, {0, 0});
+        auto* l = sc.addNode(FlowShape::Process, {-200, 200});
+        auto* r = sc.addNode(FlowShape::Process, {200, 300});
+        sc.beginLinkDrag(src, Port::Bottom);
+        sc.endLinkDrag(l->portScenePos(Port::Top));
+        sc.beginLinkDrag(src, Port::Bottom);
+        sc.endLinkDrag(r->portScenePos(Port::Top));
+        LinkItem *a = src->links[0], *b = src->links[1];
+        const QPolygonF oldA = a->points(), oldB = b->points();
+        CHECK(oldA.size() == 4 && oldB.size() == 4 && oldA[1].y() != oldB[1].y());
+        sc.clearSelection();
+        CHECK(!sc.bundleSelectedLinks());  // nothing selected: minimap toggles instead
+        a->setSelected(true);
+        CHECK(!sc.bundleSelectedLinks());  // one link only
+        b->setSelected(true);
+        r->setSelected(true);
+        CHECK(!sc.bundleSelectedLinks());  // a shape in the selection
+        r->setSelected(false);
+        CHECK(sc.bundleSelectedLinks());
+        CHECK(orthogonal(a->points()) && orthogonal(b->points()));
+        CHECK(a->points()[1].y() == b->points()[1].y());  // shared run
+        CHECK(a->points()[1].y() == std::min(oldA[1].y(), oldB[1].y()));  // only one link moved
+        CHECK(a->points() == oldA);
+        sc.undoStack()->undo();
+        CHECK(a->points() == oldA && b->points() == oldB);
+    }
+
     // Random segment drags and shape moves never leave a slanted segment.
     srand(7);
     auto rnd = [](double a, double b) { return a + (b - a) * (rand() / double(RAND_MAX)); };

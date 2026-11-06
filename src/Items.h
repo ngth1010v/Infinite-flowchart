@@ -135,6 +135,7 @@ public:
     QPainterPath shape() const override;
     void paint(QPainter* p, const QStyleOptionGraphicsItem* opt, QWidget* w) override;
 
+    static constexpr double kStub = 20;  // straight run out of a port before the first bend
     static QPolygonF route(QPointF a, Port pa, QPointF b, Port pb);  // plain elbow route
     // User-edited path: the polyline between the two port stubs, in scene coords. Empty = automatic.
     QPolygonF path;

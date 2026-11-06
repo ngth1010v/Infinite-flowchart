@@ -14,6 +14,7 @@
 #include <QSet>
 #include <algorithm>
 #include <cmath>
+#include <numeric>
 #include <utility>
 
 // One command type for every edit: it swaps the JSON state of the touched items.
@@ -367,6 +368,93 @@ void ChartScene::setLinkPath(LinkItem* link, const QPolygonF& path) {
     const States before = capture({link->id});
     link->setPath(path);
     push(tr("Edit link path"), before, capture({link->id}));
+}
+
+namespace {
+// One pass of bundling, over horizontal or vertical segments. Segments of different links whose
+// spans meet are chained into groups, and each group goes onto one line: the median of their
+// lines, which is the least total movement. Only middle segments move (their neighbors just
+// stretch); a segment next to a port stub keeps that stub at least kStub long.
+// ponytail: O(segments^2) grouping; fine for the handful of links a person selects.
+void alignSegments(const QList<LinkItem*>& links, QList<QPolygonF>& pts, bool horiz) {
+    auto along = [horiz](QPointF p) { return horiz ? p.x() : p.y(); };
+    auto across = [horiz](QPointF p) { return horiz ? p.y() : p.x(); };
+    struct Seg {
+        int link, i;
+        double at, lo, hi, min, max;
+    };
+    QList<Seg> segs;
+    for (int k = 0; k < links.size(); ++k) {
+        const QPolygonF& p = pts[k];
+        const int n = int(p.size());
+        for (int i = 1; i + 2 < n; ++i) {
+            // This direction, with square corners on both sides (so moving it keeps the link orthogonal).
+            if (std::abs(across(p[i]) - across(p[i + 1])) > 1e-6) continue;
+            if (std::abs(along(p[i - 1]) - along(p[i])) > 1e-6 || std::abs(along(p[i + 1]) - along(p[i + 2])) > 1e-6) continue;
+            Seg s{k, i, across(p[i]), std::min(along(p[i]), along(p[i + 1])), std::max(along(p[i]), along(p[i + 1])),
+                  -1e300, 1e300};
+            auto keepStub = [&](QPointF port, Port side) {
+                const double d = across(portDir(side));
+                if (d > 0) s.min = std::max(s.min, across(port) + LinkItem::kStub);
+                if (d < 0) s.max = std::min(s.max, across(port) - LinkItem::kStub);
+            };
+            if (i == 1) keepStub(p[0], links[k]->fromPort);
+            if (i == n - 3) keepStub(p[n - 1], links[k]->toPort);
+            segs << s;
+        }
+    }
+    // Union-find over segments of different links whose spans touch or overlap.
+    QList<int> root(segs.size());
+    std::iota(root.begin(), root.end(), 0);
+    auto find = [&](int x) {
+        while (root[x] != x) x = root[x] = root[root[x]];
+        return x;
+    };
+    for (int a = 0; a < segs.size(); ++a)
+        for (int b = a + 1; b < segs.size(); ++b)
+            if (segs[a].link != segs[b].link && segs[a].lo <= segs[b].hi + 0.5 && segs[b].lo <= segs[a].hi + 0.5)
+                root[find(a)] = find(b);
+    QHash<int, QList<int>> groups;
+    for (int a = 0; a < segs.size(); ++a) groups[find(a)] << a;
+    for (const QList<int>& g : std::as_const(groups)) {
+        QList<int> members;  // one segment per link: two of one link on one line would fold it back
+        QSet<int> seen;
+        for (int a : g)
+            if (!seen.contains(segs[a].link)) seen << segs[a].link, members << a;
+        if (members.size() < 2) continue;
+        QList<double> at;
+        for (int a : members) at << segs[a].at;
+        std::sort(at.begin(), at.end());
+        const double line = at[(at.size() - 1) / 2];
+        for (int a : members) {
+            const Seg& s = segs[a];
+            if (s.min > s.max) continue;
+            const double v = std::clamp(line, s.min, s.max);
+            for (QPointF* q : {&pts[s.link][s.i], &pts[s.link][s.i + 1]}) (horiz ? q->ry() : q->rx()) = v;
+        }
+    }
+}
+}  // namespace
+
+bool ChartScene::bundleSelectedLinks() {
+    if (isEditingText()) return false;
+    QList<LinkItem*> links;
+    for (auto* c : selectedChartItems()) {
+        auto* l = qgraphicsitem_cast<LinkItem*>(c);
+        if (!l) return false;  // a shape is selected too
+        if (l->from && l->to) links << l;
+    }
+    if (links.size() < 2) return false;
+    QList<int> ids;
+    QList<QPolygonF> pts;
+    for (auto* l : links) ids << l->id, pts << l->points();
+    const States before = capture(ids);
+    alignSegments(links, pts, true);
+    alignSegments(links, pts, false);
+    for (int k = 0; k < links.size(); ++k)
+        if (pts[k] != links[k]->points()) links[k]->setPath(links[k]->pathFromPoints(pts[k]));
+    push(tr("Bundle links"), before, capture(ids));
+    return true;
 }
 
 void ChartScene::editSelected(const QString& mergeKey, const std::function<void(ChartItem*)>& fn) {
