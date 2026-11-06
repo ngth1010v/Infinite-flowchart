@@ -213,8 +213,8 @@ void ChartScene::applyLinkJson(LinkItem* l, const QJsonObject& j) {
 void ChartScene::removeChartItem(int id) {
     ChartItem* c = m_items.take(id);
     if (!c) return;
+    c->cancelEdit();
     if (auto* n = qgraphicsitem_cast<NodeItem*>(c)) {
-        n->cancelEdit();
         if (m_linkSrc == n) cancelLinkDrag();
         if (linkTarget == n) linkTarget = nullptr;
         for (auto* l : QList<LinkItem*>(n->links)) removeChartItem(l->id);
@@ -224,7 +224,7 @@ void ChartScene::removeChartItem(int id) {
 
 void ChartScene::clearAll() {
     for (auto* c : std::as_const(m_items))
-        if (auto* n = qgraphicsitem_cast<NodeItem*>(c)) n->cancelEdit();
+        c->cancelEdit();
     m_linkSrc = nullptr;
     m_preview = nullptr;
     clear();  // node and link destructors unhook from each other, so order does not matter

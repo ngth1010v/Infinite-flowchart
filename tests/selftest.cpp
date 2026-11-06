@@ -30,6 +30,49 @@ int main(int argc, char** argv) {
     qputenv("QT_QPA_PLATFORM", "offscreen");
     QApplication app(argc, argv);
 
+    // Random segment drags and shape moves never leave a slanted segment.
+    srand(7);
+    auto rnd = [](double a, double b) { return a + (b - a) * (rand() / double(RAND_MAX)); };
+    for (int iter = 0; iter < 500; ++iter) {
+        ChartScene fz;
+        auto* n1 = fz.addNode(FlowShape::Process, {0, 0});
+        auto* n2 = fz.addNode(FlowShape::Process, {rnd(-300, 300), rnd(-300, 300)});
+        n1->size = QSizeF(rnd(40, 200), rnd(30, 150));
+        n2->size = QSizeF(rnd(40, 200), rnd(30, 150));
+        n1->refresh(), n2->refresh();
+        fz.beginLinkDrag(n1, Port(rand() % 4));
+        fz.endLinkDrag(n2->portScenePos(Port(rand() % 4)));
+        if (n1->links.isEmpty()) continue;
+        LinkItem* l = n1->links[0];
+        for (int step = 0; step < 8; ++step) {
+            if (rand() % 3) {
+                const int sg = rand() % int(l->points().size() - 1);
+                const QPointF pos(rnd(-400, 400), rnd(-400, 400));
+                const QPolygonF pts = l->dragSegment(l->points(), sg, rand() % 2 ? fz.snap(pos) : pos);
+                CHECK(orthogonal(pts));
+                fz.setLinkPath(l, l->pathFromPoints(pts));
+            } else {
+                (rand() % 2 ? n1 : n2)->moveBy(rnd(-100, 100), rnd(-100, 100));
+                fz.settleLinkPaths();
+            }
+            CHECK(orthogonal(l->points()));
+        }
+    }
+
+    // Facing ends a little off level slide along their sides, so the link runs straight.
+    {
+        ChartScene sc;
+        auto* p = sc.addNode(FlowShape::Process, {0, 0});
+        auto* q = sc.addNode(FlowShape::Process, {300, 0});
+        q->moveBy(0, 6);
+        sc.beginLinkDrag(p, Port::Right);
+        sc.endLinkDrag(q->portScenePos(Port::Left));
+        const QPolygonF pts = p->links.value(0)->points();
+        CHECK(pts.size() == 2 && std::abs(pts[0].y() - 3) < 1e-6 && std::abs(pts[1].y() - 3) < 1e-6);
+        q->moveBy(0, 30);  // too far off: back to a jog from the side centers
+        CHECK(p->links[0]->points().size() == 4 && std::abs(p->links[0]->points()[0].y()) < 1e-6);
+    }
+
     // Every shape has an outline, round-trips its key, and has ports on its edge.
     const QRectF r(-70, -40, 140, 80);
     for (int i = 0; i < int(FlowShape::Count); ++i) {

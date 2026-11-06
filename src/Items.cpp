@@ -4,7 +4,6 @@
 #include <QFontMetricsF>
 #include <QGraphicsSceneMouseEvent>
 #include <QGraphicsView>
-#include <QInputDialog>
 #include <QJsonArray>
 #include <QKeyEvent>
 #include <QPainter>
@@ -197,7 +196,7 @@ void NodeItem::growToFit(const QString& t, QSizeF minSize) {
     refresh();
 }
 
-void NodeItem::cancelEdit() {
+void ChartItem::cancelEdit() {
     if (!m_editor) return;
     m_editor->done = nullptr;
     delete std::exchange(m_editor, nullptr);
@@ -422,6 +421,7 @@ LinkItem::LinkItem() {
 }
 
 LinkItem::~LinkItem() {
+    if (m_editor) m_editor->done = nullptr;
     if (from) from->links.removeOne(this);
     if (to) to->links.removeOne(this);
 }
@@ -458,7 +458,8 @@ namespace {
 QPolygonF simplify(const QPolygonF& in) {
     QPolygonF out;
     for (const QPointF& p : in) {
-        if (!out.isEmpty() && QLineF(out.last(), p).length() < 0.5) continue;
+        // Exact repeats only: dropping a near one (a tiny jog's corner) would leave a slanted segment.
+        if (!out.isEmpty() && QLineF(out.last(), p).length() < 1e-3) continue;
         if (out.size() >= 2) {
             const QPointF u = out.last() - out[out.size() - 2], v = p - out.last();
             const double cross = u.x() * v.y() - u.y() * v.x(), dot = u.x() * v.x() + u.y() * v.y();
@@ -475,6 +476,7 @@ QPolygonF simplify(const QPolygonF& in) {
 
 namespace {
 constexpr double kStub = 20;  // straight run out of a port before the first bend
+constexpr double kPortSlack = 10;  // how far facing ends may slide off their side's center to line up
 
 // Orthogonal polyline a -> stub -> the user's points -> stub -> b. `path` is the user's polyline from
 // stub to stub; where an end shape has moved since, a corner joins its new stub to the user's
@@ -482,7 +484,7 @@ constexpr double kStub = 20;  // straight run out of a port before the first ben
 QPolygonF throughPath(QPointF a, Port pa, QPointF b, Port pb, const QPolygonF& path) {
     const QPointF s = a + portDir(pa) * kStub, e = b + portDir(pb) * kStub;
     const QPolygonF mid = path.mid(1, path.size() - 2);
-    auto apart = [](QPointF p, QPointF q) { return std::abs(p.x() - q.x()) > 0.01 && std::abs(p.y() - q.y()) > 0.01; };
+    auto apart = [](QPointF p, QPointF q) { return std::abs(p.x() - q.x()) > 1e-6 && std::abs(p.y() - q.y()) > 1e-6; };
     QPolygonF pts{a, s};
     const bool h0 = std::abs(path.first().y() - mid.first().y()) < 0.01;  // user's first segment is horizontal
     if (apart(s, mid.first())) pts << (h0 ? QPointF(s.x(), mid.first().y()) : QPointF(mid.first().x(), s.y()));
@@ -534,8 +536,20 @@ void LinkItem::refresh() {
         if (toAuto) toPort = to->nearestPort(from->portScenePos(fromPort));
     }
     if (!from || !to) return setPoints({});
-    const QPointF a = from->portScenePos(fromPort), b = to->portScenePos(toPort);
-    if (path.size() < 3) return setPoints(route(a, fromPort, b, toPort));
+    QPointF a = from->portScenePos(fromPort), b = to->portScenePos(toPort);
+    if (path.size() < 3) {
+        // Facing ends that are nearly level: slide both along their sides to meet halfway, so the
+        // link runs straight instead of making a tiny jog. Only where the outline is flat there.
+        const QPointF da = portDir(fromPort), db = portDir(toPort);
+        if (da == -db && QPointF::dotProduct(b - a, da) > 0) {
+            const QPointF along(std::abs(da.y()), std::abs(da.x()));
+            const double off = QPointF::dotProduct(b - a, along);
+            const QPointF a2 = a + along * off / 2, b2 = b - along * off / 2;
+            auto onEdge = [](const NodeItem* n, QPointF p, QPointF out) { return n->hitBody(p - out) && !n->hitBody(p + out); };
+            if (std::abs(off) > 1e-6 && std::abs(off) <= kPortSlack && onEdge(from, a2, da) && onEdge(to, b2, db)) a = a2, b = b2;
+        }
+        return setPoints(route(a, fromPort, b, toPort));
+    }
     // Both ends moved by the same amount (group drag, container, undo of one): the path moves along.
     const QPointF d1 = from->scenePos() - m_pathFrom, d2 = to->scenePos() - m_pathTo;
     if (QLineF(d1, d2).length() < 0.01 && !d1.isNull()) {
@@ -570,21 +584,37 @@ QPolygonF LinkItem::dragSegment(const QPolygonF& pts, int seg, QPointF pos) cons
     const QPointF p = pts[seg], q = pts[seg + 1];
     const bool horiz = std::abs(p.y() - q.y()) < 0.01;
     auto moved = [&](QPointF v) { return horiz ? QPointF(v.x(), pos.y()) : QPointF(pos.x(), v.y()); };
+    // Keep p and q, and join them to the moved segment with square corners. Moving p and q
+    // themselves only works when the neighbor segments are at right angles to this one; a neighbor
+    // on the same line (the link doubles back) would turn diagonal.
     QPolygonF out = pts.mid(0, seg);
     if (seg == 0) {  // the first run leaves the port: keep its stub, bend off after it
         const QPointF s = pts[0] + portDir(fromPort) * kStub;
         out << pts[0] << s << moved(s);
     } else {
-        out << moved(p);
+        out << p << moved(p);
     }
     if (seg + 1 == n - 1) {  // likewise for the last run
         const QPointF e = pts[n - 1] + portDir(toPort) * kStub;
         out << moved(e) << e << pts[n - 1];
     } else {
-        out << moved(q);
-        out << pts.mid(seg + 2);
+        out << moved(q) << q << pts.mid(seg + 2);
     }
-    return out;
+    // Fold runs that go out and back along one line: they draw over themselves and leave hidden
+    // segment handles. Put the stub points in first and keep them (index 1 and n-2).
+    const QPointF s = out.first() + portDir(fromPort) * kStub, e = out.last() + portDir(toPort) * kStub;
+    if (QLineF(out[1], s).length() > 1e-6) out.insert(1, s);
+    if (QLineF(out[out.size() - 2], e).length() > 1e-6) out.insert(out.size() - 1, e);
+    for (int i = 2; i + 2 < out.size();) {
+        const QPointF u = out[i] - out[i - 1], v = out[i + 1] - out[i];
+        if (std::abs(u.x() * v.y() - u.y() * v.x()) < 1e-3) {
+            out.remove(i);
+            i = std::max(2, i - 1);
+        } else {
+            ++i;
+        }
+    }
+    return simplify(out);
 }
 
 namespace {
@@ -620,16 +650,29 @@ void LinkItem::setPoints(const QPolygonF& pts) {
     stroker.setWidth(std::max(10.0, style.strokeWidth + 8));
     m_shape = stroker.createStroke(path);
     m_shape.setFillRule(Qt::WindingFill);
-    if (!text.isEmpty()) {
-        int best = 0;
-        double bestLen = -1;
-        for (int i = 0; i + 1 < m_pts.size(); ++i) {
-            const double len = QLineF(m_pts[i], m_pts[i + 1]).length();
-            if (len > bestLen) bestLen = len, best = i;
+    if (!text.isEmpty() || m_editor) {
+        // Center of the link by length, set beside the line there so the label never covers it.
+        double half = 0;
+        for (int i = 0; i + 1 < m_pts.size(); ++i) half += QLineF(m_pts[i], m_pts[i + 1]).length() / 2;
+        int seg = 0;
+        for (; seg + 2 < m_pts.size(); ++seg) {
+            const double len = QLineF(m_pts[seg], m_pts[seg + 1]).length();
+            if (half <= len) break;
+            half -= len;
         }
-        const QPointF mid = (m_pts[best] + m_pts[best + 1]) / 2;
-        const QSizeF ts = QFontMetricsF(styleFont(style)).size(0, text) + QSizeF(10, 4);
-        m_label = QRectF(mid - QPointF(ts.width() / 2, ts.height() / 2), ts);
+        const QLineF s(m_pts[seg], m_pts[seg + 1]);
+        const QPointF mid = s.length() > 0 ? s.pointAt(std::min(1.0, half / s.length())) : s.p1();
+        const QSizeF ts = QFontMetricsF(styleFont(style)).size(0, text.isEmpty() ? QStringLiteral(" ") : text) + QSizeF(10, 4);
+        const double w = ts.width(), h = ts.height(), gap = 2 + style.strokeWidth / 2;
+        const bool horiz = std::abs(s.dx()) >= std::abs(s.dy());
+        // Above or below a horizontal stretch, right or left of a vertical one: first side clear of the line.
+        const QRectF sides[2] = {
+            horiz ? QRectF(mid.x() - w / 2, mid.y() - gap - h, w, h) : QRectF(mid.x() + gap, mid.y() - h / 2, w, h),
+            horiz ? QRectF(mid.x() - w / 2, mid.y() + gap, w, h) : QRectF(mid.x() - gap - w, mid.y() - h / 2, w, h)};
+        QPainterPathStroker thin;
+        thin.setWidth(style.strokeWidth + 1);
+        const QPainterPath line = thin.createStroke(path);
+        m_label = line.intersects(sides[0]) && !line.intersects(sides[1]) ? sides[1] : sides[0];
         m_shape.addRect(m_label);
     }
     const double a = std::max(arrowSize() + 6, 20.0);  // also room for the end handles
@@ -777,8 +820,8 @@ void LinkItem::paint(QPainter* p, const QStyleOptionGraphicsItem* opt, QWidget*)
     if (style.arrowEnd) head(m_pts[n - 2], m_pts[n - 1]);
     if (style.arrowStart) head(m_pts[1], m_pts[0]);
     const double lod = opt->levelOfDetailFromTransform(p->worldTransform());
-    if (!m_label.isEmpty() && lod * style.fontSize >= 4) {
-        p->setBrush(style.fill);
+    if (!m_label.isEmpty() && !m_editor && lod * style.fontSize >= 4) {
+        p->setBrush(style.fill);  // transparent by default
         p->drawRoundedRect(m_label, 3, 3);
         p->setPen(style.text);
         p->setFont(styleFont(style));
@@ -799,11 +842,42 @@ void LinkItem::paint(QPainter* p, const QStyleOptionGraphicsItem* opt, QWidget*)
     }
 }
 
-void LinkItem::mouseDoubleClickEvent(QGraphicsSceneMouseEvent*) {
-    auto* c = chart();
-    if (!c) return;
-    bool ok = false;
-    const QString t = QInputDialog::getMultiLineText(c->views().value(0), QObject::tr("Link label"),
-                                                     QObject::tr("Label:"), text, &ok);
-    if (ok && t != text) c->setItemText(this, t);
+void LinkItem::startEdit() {
+    if (m_editor || m_pts.size() < 2) return;
+    auto* ed = new TextEditor(this);
+    m_editor = ed;
+    ed->document()->setDocumentMargin(0);
+    ed->setFont(styleFont(style));
+    ed->setDefaultTextColor(style.text);
+    QTextOption opt = ed->document()->defaultTextOption();
+    opt.setAlignment(style.align);
+    ed->document()->setDefaultTextOption(opt);
+    ed->setPlainText(text);
+    ed->setTextInteractionFlags(Qt::TextEditorInteraction);
+    const QString startText = text;
+    auto place = [this, ed] {  // live: the label box follows the text being typed
+        text = ed->toPlainText();
+        setPoints(m_pts);
+        ed->setPos(m_label.topLeft() + QPointF(5, 2));
+    };
+    QObject::connect(ed->document(), &QTextDocument::contentsChanged, ed, place);
+    place();
+    QTextCursor c(ed->document());
+    c.select(QTextCursor::Document);
+    ed->setTextCursor(c);
+    ed->done = [this, ed, startText](bool commit) {
+        const QString t = ed->toPlainText();
+        m_editor = nullptr;
+        ed->hide();
+        ed->deleteLater();
+        text = startText;  // setItemText applies the new text as one undoable step
+        setPoints(m_pts);
+        if (commit && t != text && chart()) chart()->setItemText(this, t);
+    };
+    ed->setFocus();
+    update();
+}
+
+void LinkItem::mouseDoubleClickEvent(QGraphicsSceneMouseEvent* e) {
+    if (e->button() == Qt::LeftButton) startEdit();
 }

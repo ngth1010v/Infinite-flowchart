@@ -172,6 +172,21 @@ int main(int argc, char** argv) {
         s3.undoStack()->undo();
         CHECK(l->path.isEmpty() && l->points().size() == 2);
 
+        // Typing on a selected link edits its label; the label sits beside the line, not on it.
+        s3.clearSelection();
+        l->setSelected(true);
+        vp3->setFocus();
+        QTest::keyClicks(vp3, "Yes");
+        CHECK(s3.isEditingText());
+        QTest::keyClick(vp3, Qt::Key_Return);
+        QApplication::processEvents();
+        CHECK(l->text == "Yes" && !s3.isEditingText());
+        CHECK(l->style.fill.alpha() == 0);
+        const double lineY = l->points().first().y();
+        CHECK(l->shape().contains({150, lineY - 8}));  // label above the horizontal line's middle
+        s3.undoStack()->undo();
+        CHECK(l->text.isEmpty());
+
         // 3-line link: dragging the middle line sticks where it is dropped (it used to snap back).
         s3.beginLinkDrag(p, Port::Right);
         s3.endLinkDrag(r->portScenePos(Port::Left) + QPointF(5, 0));

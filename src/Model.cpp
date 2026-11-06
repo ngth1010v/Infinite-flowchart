@@ -345,6 +345,7 @@ Style defaultNodeStyle(FlowShape s) {
 Style defaultLinkStyle() {
     Style st;
     st.stroke = QColor(0x64, 0x74, 0x8b);
+    st.fill = Qt::transparent;  // label sits beside the line, so it needs no backing
     st.fontSize = 13;
     return st;
 }

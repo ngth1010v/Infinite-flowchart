@@ -32,9 +32,11 @@ public:
     ChartScene* chart() const;
     virtual QJsonObject toJson() const = 0;
     virtual void refresh() = 0;  // re-derive geometry after changing the fields above
+    void cancelEdit();  // drop an open inline text editor without committing
 
 protected:
     double uiUnit() const;  // scene units per screen pixel, so handles keep a steady on-screen size
+    TextEditor* m_editor = nullptr;
 };
 
 class NodeItem : public ChartItem {
@@ -60,7 +62,6 @@ public:
     QJsonObject toJson() const override;
     void refresh() override;
     void startEdit();
-    void cancelEdit();
     // Height the text area needs to show `t` wrapped at `width` (padding included).
     double textHeight(const QString& t, double width) const;
     // Grow (never below minSize) so `t` fits: wider first, then taller. The top edge stays in place.
@@ -87,7 +88,6 @@ private:
     QPointF m_ports[4];
     QPointF m_fixedCorner;
     QPointF m_prevPos;  // to know how far a container moved, so its contents follow
-    TextEditor* m_editor = nullptr;
 
     bool showHandles() const;
     bool showArrows() const;
@@ -117,6 +117,7 @@ public:
     QJsonObject toJson() const override;
     void refresh() override;
     const QPolygonF& points() const { return m_pts; }
+    void startEdit();  // inline label editor, placed where the label sits
 
     QRectF boundingRect() const override { return m_bounds; }
     QPainterPath shape() const override;
