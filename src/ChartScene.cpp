@@ -336,6 +336,33 @@ void ChartScene::settleLinkPaths() {
         if (auto* l = qgraphicsitem_cast<LinkItem*>(c); l && !l->path.isEmpty()) l->settlePath();
 }
 
+void ChartScene::fitSelectedContainers() {
+    if (isEditingText()) return;
+    QList<NodeItem*> boxes;
+    for (auto* c : selectedChartItems())
+        if (auto* n = qgraphicsitem_cast<NodeItem*>(c); n && isContainer(n->shapeType)) boxes << n;
+    if (boxes.isEmpty()) return;
+    // Inner containers first, so an outer one wraps them at their fitted size.
+    std::sort(boxes.begin(), boxes.end(), [](NodeItem* a, NodeItem* b) {
+        return a->size.width() * a->size.height() < b->size.width() * b->size.height();
+    });
+    QList<int> ids;
+    for (auto* n : boxes) ids << n->id;
+    const States before = capture(ids);
+    for (auto* n : boxes) {
+        QRectF box;
+        for (auto* c : contents(n)) box |= c->mapRectToScene(c->rect());
+        if (box.isNull()) continue;  // empty container: nothing to fit
+        box.adjust(-n->padding, -n->padding, n->padding, n->padding);
+        if (n->shapeType == FlowShape::HContainer) box.setLeft(box.left() - kContainerHeader);
+        else box.setTop(box.top() - kContainerHeader);  // room for the title band
+        n->size = box.size();
+        n->setPos(box.center());
+        n->refresh();
+    }
+    push(tr("Fit container"), before, capture(ids));
+}
+
 void ChartScene::setLinkPath(LinkItem* link, const QPolygonF& path) {
     const States before = capture({link->id});
     link->setPath(path);

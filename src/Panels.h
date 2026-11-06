@@ -48,9 +48,9 @@ private:
 
     QLabel* m_title;
     QPlainTextEdit* m_text;
-    QWidget *m_nodeBox, *m_linkBox;
+    QWidget *m_nodeBox, *m_containerBox, *m_linkBox;
     QComboBox *m_shape, *m_dash, *m_align;
-    QSpinBox *m_w, *m_h, *m_fontSize;
+    QSpinBox *m_w, *m_h, *m_fontSize, *m_padding;
     QDoubleSpinBox* m_strokeW;
     QToolButton *m_fill, *m_stroke, *m_textColor;
     QFontComboBox* m_font;

@@ -30,6 +30,38 @@ int main(int argc, char** argv) {
     qputenv("QT_QPA_PLATFORM", "offscreen");
     QApplication app(argc, argv);
 
+    // Ctrl+F: a container wraps its contents plus padding and the title band; undo, save/load.
+    {
+        ChartScene sc;
+        auto* box = sc.addNode(FlowShape::VContainer, {0, 0});
+        box->size = {600, 400};
+        box->refresh();
+        auto* a = sc.addNode(FlowShape::Process, {-50, 0});
+        auto* b = sc.addNode(FlowShape::Process, {100, 80});
+        const QRectF inner = a->mapRectToScene(a->rect()) | b->mapRectToScene(b->rect());
+        CHECK(box->padding > 0);
+        box->padding = 15;
+        sc.clearSelection();
+        box->setSelected(true);
+        QApplication::processEvents();
+        const QRectF oldArea = box->mapRectToScene(box->rect());
+        QRectF repainted;
+        QObject::connect(&sc, &QGraphicsScene::changed, [&](const QList<QRectF>& rs) {
+            for (const QRectF& r : rs) repainted |= r;
+        });
+        sc.fitSelectedContainers();
+        QApplication::processEvents();
+        CHECK(repainted.contains(oldArea));  // the old border is repainted, not left behind
+        const QRectF want = inner.adjusted(-15, -15 - kContainerHeader, 15, 15);
+        CHECK(QLineF(box->mapRectToScene(box->rect()).topLeft(), want.topLeft()).length() < 1e-6);
+        CHECK(QLineF(box->mapRectToScene(box->rect()).bottomRight(), want.bottomRight()).length() < 1e-6);
+        CHECK(a->pos() == QPointF(-50, 0) && b->pos() == QPointF(100, 80));  // contents stay put
+        CHECK(box->toJson()["padding"].toDouble() == 15);
+        sc.undoStack()->undo();
+        CHECK(box->size == QSizeF(600, 400));
+        CHECK(box->toJson()["padding"].toDouble() == 15);  // padding survives undo's reload
+    }
+
     // Random segment drags and shape moves never leave a slanted segment.
     srand(7);
     auto rnd = [](double a, double b) { return a + (b - a) * (rand() / double(RAND_MAX)); };

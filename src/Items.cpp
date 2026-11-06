@@ -86,18 +86,22 @@ void NodeItem::setFromJson(const QJsonObject& j) {
     setPos(std::clamp(j["x"].toDouble(), -4e5, 4e5), std::clamp(j["y"].toDouble(), -4e5, 4e5));
     text = j["text"].toString();
     style = styleFromJson(j["style"].toObject());
+    padding = std::clamp(j["padding"].toDouble(40), 0.0, 2000.0);
     refresh();
 }
 
 QJsonObject NodeItem::toJson() const {
-    return {{"kind", "node"},          {"id", id},       {"shape", shapeKey(shapeType)},
-            {"x", pos().x()},          {"y", pos().y()}, {"w", size.width()},
-            {"h", size.height()},      {"text", text},   {"style", styleToJson(style)}};
+    QJsonObject j{{"kind", "node"},          {"id", id},       {"shape", shapeKey(shapeType)},
+                  {"x", pos().x()},          {"y", pos().y()}, {"w", size.width()},
+                  {"h", size.height()},      {"text", text},   {"style", styleToJson(style)}};
+    if (isContainer(shapeType)) j["padding"] = padding;
+    return j;
 }
 
 void NodeItem::refresh() {
     prepareGeometryChange();
     const QRectF r = rect();
+    m_bounds = r.adjusted(-kMargin, -kMargin, kMargin, kMargin);
     m_outline = shapeOutline(shapeType, r);
     m_deco = shapeDecoration(shapeType, r);
     for (int i = 0; i < 4; ++i) m_ports[i] = shapePort(shapeType, r, Port(i));
@@ -239,8 +243,6 @@ int NodeItem::hitArrow(QPointF pos) const {
         if (QLineF(pos, arrowPos(i)).length() <= 8 * uiUnit()) return i;
     return -1;
 }
-
-QRectF NodeItem::boundingRect() const { return rect().adjusted(-kMargin, -kMargin, kMargin, kMargin); }
 
 QPainterPath NodeItem::shape() const {
     // Containers are hit only on their border and title band; clicks in the body fall through to

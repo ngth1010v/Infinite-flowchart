@@ -50,6 +50,8 @@ public:
     void setItemText(ChartItem* item, const QString& text);
     void reconnectLink(LinkItem* link, bool sourceEnd, NodeItem* node, Port port, bool autoPort = false);
     void setLinkPath(LinkItem* link, const QPolygonF& path);
+    // Shrink or grow each selected container to wrap the shapes inside it, plus its padding.
+    void fitSelectedContainers();
     void settleLinkPaths();  // see LinkItem::settlePath
     void editSelected(const QString& mergeKey, const std::function<void(ChartItem*)>& fn);
     QJsonObject copySelection() const;

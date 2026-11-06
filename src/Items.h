@@ -48,6 +48,7 @@ public:
 
     FlowShape shapeType;
     QSizeF size;
+    double padding = 40;  // container only: room kept around its contents by "fit to contents"
     QList<LinkItem*> links;
 
     QRectF rect() const { return {-size.width() / 2, -size.height() / 2, size.width(), size.height()}; }
@@ -67,7 +68,9 @@ public:
     // Grow (never below minSize) so `t` fits: wider first, then taller. The top edge stays in place.
     void growToFit(const QString& t, QSizeF minSize);
 
-    QRectF boundingRect() const override;
+    // Kept from the last refresh(), not read from `size`: callers change `size` first, and Qt must
+    // still see the old bounds when refresh() announces the change, or the old area is never repainted.
+    QRectF boundingRect() const override { return m_bounds; }
     QPainterPath shape() const override;
     void paint(QPainter* p, const QStyleOptionGraphicsItem* opt, QWidget* w) override;
 
@@ -85,6 +88,7 @@ private:
     enum class Mode { None, Resize, Link } m_mode = Mode::None;
     bool m_hover = false;
     QPainterPath m_outline, m_deco;
+    QRectF m_bounds;
     QPointF m_ports[4];
     static constexpr int kHandles = 8;  // resize handles: 4 corners, then 4 edge middles
     QPointF m_fixedCorner, m_movingCorner;

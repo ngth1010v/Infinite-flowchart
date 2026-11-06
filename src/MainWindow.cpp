@@ -179,6 +179,8 @@ void MainWindow::buildMenus() {
                [this] { m_scene->deleteSelected(); });
     edit->addSeparator();
     makeAction(edit, tr("Select &all"), {QKeySequence::SelectAll}, [this] { m_scene->selectAll(); });
+    makeAction(edit, tr("&Fit container to contents"), {QKeySequence(Qt::CTRL | Qt::Key_F)},
+               [this] { m_scene->fitSelectedContainers(); });
     makeAction(edit, tr("&Reset link path"), {}, [this] {
         m_scene->editSelected(QString(), [](ChartItem* c) {
             if (auto* l = qgraphicsitem_cast<LinkItem*>(c)) l->path.clear();

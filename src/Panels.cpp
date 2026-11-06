@@ -227,6 +227,23 @@ StylePanel::StylePanel(ChartScene* scene, QWidget* parent) : QWidget(parent), m_
         });
     });
 
+    // Container-only: padding kept around the contents by Ctrl+F (fit to contents)
+    m_containerBox = new QWidget;
+    auto* cf = form(m_containerBox);
+    m_padding = new QSpinBox;
+    m_padding->setRange(-1, 2000);  // -1 = blank "mixed"
+    m_padding->setSpecialValueText(" ");
+    m_padding->setSuffix(" px");
+    m_padding->setToolTip(tr("Space around the contents when fitting the container (Ctrl+F)"));
+    cf->addRow(tr("Padding"), m_padding);
+    lay->addWidget(m_containerBox);
+    connect(m_padding, &QSpinBox::valueChanged, this, [this](int v) {
+        if (v < 0) return;
+        edit("padding", [&](ChartItem* c) {
+            if (auto* n = asNode(c); n && isContainer(n->shapeType)) n->padding = v;
+        });
+    });
+
     // Shared: fill, line, text style
     auto* sf = form();
     m_fill = colorButton("fill", &Style::fill);
@@ -373,6 +390,7 @@ void StylePanel::refresh() {
         m_text->clear();
         m_text->setPlaceholderText(QString());
         m_nodeBox->hide();
+        m_containerBox->hide();
         m_linkBox->hide();
         return;
     }
@@ -382,6 +400,11 @@ void StylePanel::refresh() {
                      : nodes.size() == 1 ? shapeName(asNode(nodes[0])->shapeType)
                                          : tr("Link"));
     m_nodeBox->setVisible(!nodes.isEmpty());
+    QList<ChartItem*> boxes;
+    for (auto* c : nodes)
+        if (isContainer(asNode(c)->shapeType)) boxes << c;
+    m_containerBox->setVisible(!boxes.isEmpty());
+    showValue(m_padding, common(boxes, [](ChartItem* c) { return qRound(asNode(c)->padding); }));
     m_linkBox->setVisible(!links.isEmpty());
 
     if (const auto t = common(items, [](ChartItem* c) { return c->text; })) {

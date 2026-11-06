@@ -23,7 +23,7 @@ Open a chart directly: `Flowchart.exe path\to\chart.flowx`. Example: `samples\sq
 | Zoom | Mouse wheel (around the cursor), Ctrl+= / Ctrl+-, Ctrl+0 = 100%, Ctrl+R = fit whole chart (2%–5000%) |
 | Pan | Right-drag, middle-drag, Space+drag, Shift+wheel (sideways) |
 | Snap | Grid + alignment guides while dragging; hold Alt to place freely; toggle in View menu |
-| Edit | Ctrl+Z / Ctrl+Y, Ctrl+C / X / V, Ctrl+D duplicate, Delete, Ctrl+A |
+| Edit | Ctrl+Z / Ctrl+Y, Ctrl+C / X / V, Ctrl+D duplicate, Delete, Ctrl+A, Ctrl+F fit selected container to its contents (padding set in the style panel) |
 | File | Ctrl+N, Ctrl+O, Ctrl+S, Ctrl+Shift+S, Ctrl+E export PNG/SVG/PDF, Ctrl+W back to home |
 | View | Ctrl+B shape panel icons-only, Ctrl+M minimap, View > Dark theme |
 
