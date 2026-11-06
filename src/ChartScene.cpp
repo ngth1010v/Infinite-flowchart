@@ -4,6 +4,7 @@
 #include <QImage>
 #include <QPainter>
 #include <QPdfWriter>
+#include <QSaveFile>
 #include <QSvgGenerator>
 #include <QGraphicsPathItem>
 #include <QGraphicsSceneMouseEvent>
@@ -106,6 +107,12 @@ bool ChartScene::exportTo(const QString& path) {
     const QRectF r = contentRect();
     if (r.isNull()) return false;
     const QString ext = QFileInfo(path).suffix().toLower();
+    if (ext == "md" || ext == "txt") {
+        QSaveFile f(path);
+        if (!f.open(QIODevice::WriteOnly)) return false;
+        f.write(toLlmText(QFileInfo(path).completeBaseName()).toUtf8());
+        return f.commit();
+    }
     overlaysHidden = true;
     bool ok = true;
     if (ext == "png") {
@@ -137,6 +144,59 @@ bool ChartScene::exportTo(const QString& path) {
     }
     overlaysHidden = false;
     return ok;
+}
+
+QString ChartScene::toLlmText(const QString& title) const {
+    QList<NodeItem*> nodes;
+    for (auto* c : m_items)
+        if (auto* n = qgraphicsitem_cast<NodeItem*>(c)) nodes << n;
+    // Reading order: top to bottom, then left to right.
+    std::sort(nodes.begin(), nodes.end(), [](NodeItem* a, NodeItem* b) {
+        return std::pair(a->pos().y(), a->pos().x()) < std::pair(b->pos().y(), b->pos().x());
+    });
+    auto area = [](const NodeItem* n) { return n->size.width() * n->size.height(); };
+    // Parent = smallest container (bigger than the shape itself) holding the shape's center,
+    // the same rule contents() uses.
+    QHash<const NodeItem*, QList<NodeItem*>> kids;
+    for (auto* n : nodes) {
+        NodeItem* parent = nullptr;
+        for (auto* c : nodes) {
+            if (c == n || !isContainer(c->shapeType) || !c->mapRectToScene(c->rect()).contains(n->pos())) continue;
+            if (isContainer(n->shapeType) && area(c) <= area(n)) continue;
+            if (!parent || area(c) < area(parent)) parent = c;
+        }
+        kids[parent] << n;
+    }
+    auto label = [](const NodeItem* n) {
+        const QString t = n->text.simplified();
+        return QString("[%1] %2").arg(n->id).arg(shapeName(n->shapeType)) + (t.isEmpty() ? "" : " \"" + t + "\"");
+    };
+
+    QString out = "# Flowchart: " + title + "\n\n"
+                  "Shapes are listed as [id] Type \"text\". Indented shapes are inside the container above them.\n\n"
+                  "## Shapes\n\n";
+    std::function<void(const NodeItem*, int)> tree = [&](const NodeItem* parent, int depth) {
+        for (auto* n : kids.value(parent)) {
+            out += QString(depth * 2, ' ') + "- " + label(n) + "\n";
+            tree(n, depth + 1);
+        }
+    };
+    tree(nullptr, 0);
+
+    out += "\n## Links\n\n";
+    QList<int> ids = m_items.keys();
+    std::sort(ids.begin(), ids.end());
+    int linkCount = 0;
+    for (int id : ids) {
+        auto* l = qgraphicsitem_cast<LinkItem*>(m_items[id]);
+        if (!l || !l->from || !l->to) continue;
+        const char* arrow = l->style.arrowEnd ? (l->style.arrowStart ? "<->" : "->") : (l->style.arrowStart ? "<-" : "--");
+        const QString t = l->text.simplified();
+        out += "- " + label(l->from) + " " + arrow + " " + label(l->to) + (t.isEmpty() ? "" : " (label: \"" + t + "\")") + "\n";
+        ++linkCount;
+    }
+    if (!linkCount) out += "(none)\n";
+    return out;
 }
 
 // ---------------------------------------------------------------- state plumbing

@@ -58,7 +58,7 @@ private:
     bool save();
     bool saveAs();
     bool writeFile(const QString& path);
-    void exportChart();
+    void exportChart(bool forLlm = false);  // forLlm: text outline (.md/.txt) instead of an image
     void copy();
     void paste();
     void applyTheme(bool dark);

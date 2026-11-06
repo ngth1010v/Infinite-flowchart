@@ -3,6 +3,7 @@
 #include "ChartScene.h"
 #include <QApplication>
 #include <QElapsedTimer>
+#include <QFile>
 #include <QFileInfo>
 #include <QTemporaryDir>
 #include <QImage>
@@ -297,6 +298,35 @@ int main(int argc, char** argv) {
         CHECK(QFileInfo(path).size() > 500);
     }
     CHECK(!ChartScene().exportTo(tmp.filePath("empty.png")));
+
+    // Export for LLM: nesting by container, links by id, no coordinates.
+    {
+        ChartScene sc;
+        auto* outer = sc.addNode(FlowShape::VContainer, {0, 0});
+        outer->size = {800, 600};
+        outer->text = "Lane";
+        outer->refresh();
+        auto* inner = sc.addNode(FlowShape::HContainer, {0, 50});
+        inner->size = {400, 200};
+        inner->refresh();
+        auto* a = sc.addNode(FlowShape::Process, {0, 60});
+        a->text = "Do\nthis";
+        auto* b = sc.addNode(FlowShape::Decision, {2000, 0});
+        b->text = "OK?";
+        sc.beginLinkDrag(a, Port::Right);
+        sc.endLinkDrag(b->portScenePos(Port::Left));
+        CHECK(a->links.size() == 1);
+        const QString t = sc.toLlmText("demo");
+        CHECK(t.contains(QString("- [%1] %2 \"Lane\"\n  - [%3] %4\n    - [%5] Process \"Do this\"\n")
+                             .arg(outer->id).arg(shapeName(FlowShape::VContainer))
+                             .arg(inner->id).arg(shapeName(FlowShape::HContainer)).arg(a->id)));
+        CHECK(t.contains(QString("\n- [%1] Decision \"OK?\"\n").arg(b->id)));
+        CHECK(t.contains(QString("- [%1] Process \"Do this\" -> [%2] Decision \"OK?\"").arg(a->id).arg(b->id)));
+        const QString path = tmp.filePath("chart.md");
+        CHECK(sc.exportTo(path));
+        QFile f(path);
+        CHECK(f.open(QIODevice::ReadOnly) && QString::fromUtf8(f.readAll()) == sc.toLlmText("chart"));
+    }
 
     // Malformed input is skipped, not trusted.
     ChartScene bad;

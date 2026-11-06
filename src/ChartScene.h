@@ -42,7 +42,10 @@ public:
     void fromJson(const QJsonObject& o);  // replaces everything and clears undo history
     QRectF contentRect() const;           // tight bounds of nodes and links (+ small padding)
     int itemCount() const { return int(m_items.size()); }
-    bool exportTo(const QString& path);   // .png (2x), .svg or .pdf by extension
+    bool exportTo(const QString& path);   // .png (2x), .svg, .pdf, or .md/.txt (toLlmText) by extension
+    // Plain-text outline for LLMs: which container holds which shape, and which shape links to
+    // which. No positions or styles.
+    QString toLlmText(const QString& title) const;
 
     // Undoable edits
     NodeItem* addNode(FlowShape s, QPointF center);

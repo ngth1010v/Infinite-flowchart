@@ -155,6 +155,8 @@ void MainWindow::buildMenus() {
     makeAction(file, tr("&Save"), {QKeySequence::Save}, [this] { save(); });
     makeAction(file, tr("Save &as…"), {QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_S)}, [this] { saveAs(); });
     makeAction(file, tr("&Export as PNG / SVG / PDF…"), {QKeySequence(Qt::CTRL | Qt::Key_E)}, [this] { exportChart(); });
+    makeAction(file, tr("Export for &LLM (text)…"), {QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_E)},
+               [this] { exportChart(true); });
     file->addSeparator();
     makeAction(file, tr("&Close chart (go home)"), {QKeySequence(Qt::CTRL | Qt::Key_W)}, [this] { goHome(); });
     makeAction(file, tr("E&xit"), {QKeySequence(Qt::ALT | Qt::Key_F4)}, [this] { close(); }, false);
@@ -430,7 +432,7 @@ void MainWindow::start(const QString& fileArg) {
 
 // ---------------------------------------------------------------- export & clipboard
 
-void MainWindow::exportChart() {
+void MainWindow::exportChart(bool forLlm) {
     const QRectF r = m_scene->contentRect();
     if (r.isNull()) {
         QMessageBox::information(this, tr("Export"), tr("The chart is empty."));
@@ -439,12 +441,16 @@ void MainWindow::exportChart() {
     const QString base = m_path.isEmpty() ? tr("Untitled") : QFileInfo(m_path).completeBaseName();
     const QString dir = QSettings().value("lastDir", QDir::homePath()).toString();
     QString filter;
-    QString path = QFileDialog::getSaveFileName(this, tr("Export chart"), QDir(dir).filePath(base + ".png"),
-                                                tr("PNG image (*.png);;SVG image (*.svg);;PDF document (*.pdf)"), &filter);
+    const QStringList exts = forLlm ? QStringList{"md", "txt"} : QStringList{"png", "svg", "pdf"};
+    const QString filters = forLlm ? tr("Markdown for LLM (*.md);;Plain text for LLM (*.txt)")
+                                   : tr("PNG image (*.png);;SVG image (*.svg);;PDF document (*.pdf)");
+    QString path = QFileDialog::getSaveFileName(this, forLlm ? tr("Export for LLM") : tr("Export chart"),
+                                                QDir(dir).filePath(base + "." + exts[0]), filters, &filter);
     if (path.isEmpty()) return;
-    QString ext = QFileInfo(path).suffix().toLower();
-    if (ext != "png" && ext != "svg" && ext != "pdf") {
-        ext = filter.contains("svg") ? "svg" : filter.contains("pdf") ? "pdf" : "png";
+    if (!exts.contains(QFileInfo(path).suffix().toLower())) {
+        QString ext = exts[0];
+        for (const QString& e : exts)
+            if (filter.contains("*." + e)) ext = e;
         path += "." + ext;
     }
 
