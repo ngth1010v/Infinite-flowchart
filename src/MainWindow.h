@@ -36,7 +36,8 @@ private:
     QWidget* m_paletteBox;
     QToolButton* m_paletteToggle;
     QVariantAnimation m_leftAnim, m_rightAnim;  // slide the side panels open/closed
-    QTimer m_panelTimer;
+    QToolButton* m_panelToggle;
+    QAction* m_panelAction;
     bool m_paletteCollapsed = false;
     QLabel* m_zoomLabel;
     QList<QAction*> m_chartActions;

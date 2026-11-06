@@ -80,10 +80,16 @@ MainWindow::MainWindow() {
         m_panelScroll->setFixedWidth(v.toInt());
         m_panelScroll->setVisible(v.toInt() > 0);
     });
-    // Selection often changes in two steps (clear, then select); decide once both are done.
-    m_panelTimer.setSingleShot(true);
-    m_panelTimer.setInterval(0);
-    connect(&m_panelTimer, &QTimer::timeout, this, &MainWindow::updatePanelVisibility);
+    // Thin strip on the far right holding the style panel's open/close button.
+    auto* panelStrip = new QWidget;
+    auto* sl = new QVBoxLayout(panelStrip);
+    sl->setContentsMargins(2, 4, 2, 4);
+    m_panelToggle = new QToolButton;
+    m_panelToggle->setAutoRaise(true);
+    m_panelToggle->setText(QStringLiteral("«"));
+    m_panelToggle->setToolTip(tr("Show/hide style panel (Ctrl+Shift+B)"));
+    sl->addWidget(m_panelToggle);
+    sl->addStretch();
 
     m_chartPage = new QWidget;
     auto* h = new QHBoxLayout(m_chartPage);
@@ -92,6 +98,7 @@ MainWindow::MainWindow() {
     h->addWidget(m_paletteBox);
     h->addWidget(m_view, 1);
     h->addWidget(m_panelScroll);
+    h->addWidget(panelStrip);
 
     m_home = new HomeScreen;
     m_stack = new QStackedWidget;
@@ -115,7 +122,7 @@ MainWindow::MainWindow() {
         m_scene->addNode(s, m_view->visibleCenter());
         m_view->setFocus();
     });
-    connect(m_scene, &QGraphicsScene::selectionChanged, &m_panelTimer, qOverload<>(&QTimer::start));
+    connect(m_panelToggle, &QToolButton::clicked, m_panelAction, &QAction::toggle);
     connect(m_scene->undoStack(), &QUndoStack::cleanChanged, this, &MainWindow::updateTitle);
     connect(m_view, &ChartView::zoomChanged, this,
             [this](double z) { m_zoomLabel->setText(QStringLiteral("%1%").arg(qRound(z * 100))); });
@@ -198,6 +205,13 @@ void MainWindow::buildMenus() {
     });
     makeAction(view, tr("Shape panel: icons only"), {QKeySequence(Qt::CTRL | Qt::Key_B)},
                [this] { setPaletteCollapsed(!m_paletteCollapsed); });
+    // Style panel starts closed every launch and opens only on request, not on selection.
+    m_panelAction = makeAction(view, tr("S&tyle panel"), {QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_B)}, [] {});
+    m_panelAction->setCheckable(true);
+    connect(m_panelAction, &QAction::toggled, this, [this](bool on) {
+        m_panelToggle->setText(on ? QStringLiteral("»") : QStringLiteral("«"));
+        updatePanelVisibility();
+    });
     view->addSeparator();
     auto* dark = makeAction(view, tr("&Dark theme"), {}, [] {}, false);
     dark->setCheckable(true);
@@ -225,6 +239,7 @@ void MainWindow::showChart() {
     m_stack->setCurrentWidget(m_chartPage);
     for (auto* a : std::as_const(m_chartActions)) a->setEnabled(true);
     statusBar()->show();
+    updatePanelVisibility();  // back from home: reopen the style panel if it was open
     m_view->setFocus();
 }
 
@@ -473,7 +488,7 @@ void MainWindow::setPaletteCollapsed(bool collapsed, bool animate) {
 }
 
 void MainWindow::updatePanelVisibility() {
-    const int to = onChart() && !m_scene->selectedChartItems().isEmpty() ? kPanelOpen : 0;
+    const int to = onChart() && m_panelAction->isChecked() ? kPanelOpen : 0;
     if (m_rightAnim.state() == QAbstractAnimation::Running ? m_rightAnim.endValue().toInt() == to
                                                             : m_panelScroll->width() == to)
         return;

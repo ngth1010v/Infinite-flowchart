@@ -305,6 +305,7 @@ StylePanel::StylePanel(ChartScene* scene, QWidget* parent) : QWidget(parent), m_
     connect(scene->undoStack(), &QUndoStack::indexChanged, this, [this] {
         if (!m_applying) refresh();  // undo/redo or canvas edits; skip our own pushes
     });
+    refresh();
 }
 
 void StylePanel::edit(const QString& key, const std::function<void(ChartItem*)>& fn) {
@@ -366,7 +367,15 @@ void StylePanel::refresh() {
     const QList<ChartItem*> items = m_scene->selectedChartItems();
     QList<ChartItem*> nodes, links;
     for (auto* c : items) (c->type() == NodeItem::Type ? nodes : links) << c;
-    if (items.isEmpty()) return;
+    m_text->setEnabled(!items.isEmpty());
+    if (items.isEmpty()) {  // panel can be open with nothing selected
+        m_title->setText(tr("Nothing selected"));
+        m_text->clear();
+        m_text->setPlaceholderText(QString());
+        m_nodeBox->hide();
+        m_linkBox->hide();
+        return;
+    }
 
     m_updating = true;
     m_title->setText(items.size() > 1 ? tr("%1 items selected").arg(items.size())
