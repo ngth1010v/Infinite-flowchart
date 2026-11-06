@@ -179,6 +179,11 @@ void MainWindow::buildMenus() {
                [this] { m_scene->deleteSelected(); });
     edit->addSeparator();
     makeAction(edit, tr("Select &all"), {QKeySequence::SelectAll}, [this] { m_scene->selectAll(); });
+    makeAction(edit, tr("&Reset link path"), {}, [this] {
+        m_scene->editSelected(QString(), [](ChartItem* c) {
+            if (auto* l = qgraphicsitem_cast<LinkItem*>(c)) l->path.clear();
+        });
+    });
 
     auto* view = menuBar()->addMenu(tr("&View"));
     makeAction(view, tr("&Fit whole chart"), {QKeySequence(Qt::CTRL | Qt::Key_R)}, [this] { m_view->fitAll(); });

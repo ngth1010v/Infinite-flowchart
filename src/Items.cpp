@@ -5,6 +5,7 @@
 #include <QGraphicsSceneMouseEvent>
 #include <QGraphicsView>
 #include <QInputDialog>
+#include <QJsonArray>
 #include <QKeyEvent>
 #include <QPainter>
 #include <QStyleOptionGraphicsItem>
@@ -410,6 +411,12 @@ void LinkItem::setEnds(NodeItem* f, Port fp, NodeItem* t, Port tp, bool fAuto, b
     refresh();
 }
 
+QJsonArray LinkItem::pathJson() const {
+    QJsonArray a;
+    for (const QPointF& p : path) a << QJsonArray{p.x(), p.y()};
+    return a;
+}
+
 QJsonObject LinkItem::toJson() const {
     return {{"kind", "link"},
             {"id", id},
@@ -417,6 +424,7 @@ QJsonObject LinkItem::toJson() const {
             {"fromPort", fromAuto ? QStringLiteral("auto") : portKey(fromPort)},
             {"to", to ? to->id : 0},
             {"toPort", toAuto ? QStringLiteral("auto") : portKey(toPort)},
+            {"path", pathJson()},
             {"text", text},
             {"style", styleToJson(style)}};
 }
@@ -442,195 +450,25 @@ QPolygonF simplify(const QPolygonF& in) {
 }  // namespace
 
 namespace {
-constexpr double kStub = 20;       // straight run out of a port before the first bend
-constexpr double kClearance = 12;  // gap kept between a link and the shapes it passes
+constexpr double kStub = 20;  // straight run out of a port before the first bend
 
-bool inside(const QRectF& r, QPointF p) {  // strictly inside: running along an edge is fine
-    return p.x() > r.left() + 1e-6 && p.x() < r.right() - 1e-6 && p.y() > r.top() + 1e-6 && p.y() < r.bottom() - 1e-6;
-}
-
-// Push p along d until it is out of every block.
-QPointF escape(QPointF p, QPointF d, const QList<QRectF>& blocks) {
-    for (int guard = 0; guard < 16; ++guard) {
-        bool moved = false;
-        for (const QRectF& r : blocks)
-            if (inside(r, p)) {
-                if (d.x() > 0) p.setX(r.right());
-                else if (d.x() < 0) p.setX(r.left());
-                else if (d.y() > 0) p.setY(r.bottom());
-                else p.setY(r.top());
-                moved = true;
-            }
-        if (!moved) break;
-    }
-    return p;
-}
-
-// Does the axis-aligned segment pq pass through the inside of r?
-bool hits(const QRectF& r, QPointF p, QPointF q) {
-    const QRectF s = QRectF(p, q).normalized();
-    return s.right() > r.left() + 1e-6 && s.left() < r.right() - 1e-6 && s.bottom() > r.top() + 1e-6 &&
-           s.top() < r.bottom() - 1e-6;
-}
-
-// Length of pq that runs on top of (within 6 units of, parallel to) another link segment.
-double overlap(QPointF p, QPointF q, const QLineF& o) {
-    const bool horiz = std::abs(p.y() - q.y()) < 0.5;
-    const bool oh = std::abs(o.y1() - o.y2()) < 0.5, ov = std::abs(o.x1() - o.x2()) < 0.5;
-    if (horiz && oh && std::abs(o.y1() - p.y()) < 6)
-        return std::max(0.0, std::min(std::max(p.x(), q.x()), std::max(o.x1(), o.x2())) -
-                                 std::max(std::min(p.x(), q.x()), std::min(o.x1(), o.x2())));
-    if (!horiz && ov && std::abs(o.x1() - p.x()) < 6)
-        return std::max(0.0, std::min(std::max(p.y(), q.y()), std::max(o.y1(), o.y2())) -
-                                 std::max(std::min(p.y(), q.y()), std::min(o.y1(), o.y2())));
-    return 0;
-}
-
-QList<double> gridLines(QList<double> v) {
-    std::sort(v.begin(), v.end());
-    QList<double> u;
-    for (double x : v)
-        if (u.isEmpty() || x - u.last() > 0.5) u << x;
-    QList<double> out;  // add the middle of each gap: spare lanes so links can run side by side
-    for (int i = 0; i < u.size(); ++i) {
-        if (i > 0 && u[i] - u[i - 1] > 16) out << (u[i] + u[i - 1]) / 2;
-        out << u[i];
-    }
-    return out;
-}
-
-// Orthogonal A* over a sparse grid made from the blocks' edges. Cost = length + bends + time spent
-// on top of (or crossing) other links. Empty result when there is no way through.
-QPolygonF routeAround(QPointF a, Port pa, QPointF b, Port pb, const QList<QRectF>& blocks,
-                      const QList<QLineF>& others, const QRectF& area) {
-    const QPointF da = portDir(pa), db = portDir(pb);
-    const QPointF s = escape(a + da * kStub, da, blocks), e = escape(b + db * kStub, db, blocks);
-    QList<double> xv{s.x(), e.x(), area.left(), area.right()}, yv{s.y(), e.y(), area.top(), area.bottom()};
-    for (const QRectF& r : blocks) xv << r.left() << r.right(), yv << r.top() << r.bottom();
-    const QList<double> xs = gridLines(xv), ys = gridLines(yv);
-    const int nx = int(xs.size()), ny = int(ys.size());
-    if (qint64(nx) * ny > 40000) return {};
-    auto at = [&](int i, int j) { return QPointF(xs[i], ys[j]); };
-    auto find = [](const QList<double>& v, double x) {
-        return int(std::min_element(v.begin(), v.end(), [x](double p, double q) { return std::abs(p - x) < std::abs(q - x); }) - v.begin());
-    };
-    const int si = find(xs, s.x()), sj = find(ys, s.y()), ei = find(xs, e.x()), ej = find(ys, e.y());
-
-    // Directions: 0 right, 1 down, 2 left, 3 up.
-    static const int DX[4] = {1, 0, -1, 0}, DY[4] = {0, 1, 0, -1};
-    auto dirOf = [](QPointF d) { return d.x() > 0 ? 0 : d.y() > 0 ? 1 : d.x() < 0 ? 2 : 3; };
-    const int startDir = dirOf(da), endDir = dirOf(-db);  // last run heads into b, against db
-
-    // Step cost from grid point (i, j) one step in direction d; < 0 = blocked.
-    auto stepCost = [&](int i, int j, int d) -> double {
-        const int i2 = i + DX[d], j2 = j + DY[d];
-        if (i2 < 0 || j2 < 0 || i2 >= nx || j2 >= ny) return -1;
-        const QPointF p = at(i, j), q = at(i2, j2), mid = (p + q) / 2;
-        for (const QRectF& r : blocks)
-            if (inside(r, q) || inside(r, mid)) return -1;
-        const double len = QLineF(p, q).length();
-        double cost = len;
-        const bool horiz = DY[d] == 0;
-        for (const QLineF& o : others) {
-            const bool oh = std::abs(o.y1() - o.y2()) < 0.5, ov = std::abs(o.x1() - o.x2()) < 0.5;
-            if (const double run = overlap(p, q, o); run > 1) {  // running along another link
-                cost += run * 4;
-            } else if (horiz && ov) {  // crossing another link
-                const double x = o.x1();
-                if (x > std::min(p.x(), q.x()) && x < std::max(p.x(), q.x()) && p.y() > std::min(o.y1(), o.y2()) &&
-                    p.y() < std::max(o.y1(), o.y2()))
-                    cost += 15;
-            } else if (!horiz && oh) {
-                const double y = o.y1();
-                if (y > std::min(p.y(), q.y()) && y < std::max(p.y(), q.y()) && p.x() > std::min(o.x1(), o.x2()) &&
-                    p.x() < std::max(o.x1(), o.x2()))
-                    cost += 15;
-            }
-        }
-        return cost;
-    };
-
-    constexpr double kBend = 30;
-    const int n = nx * ny * 4;
-    QList<double> dist(n, 1e300);
-    QList<int> prev(n, -1);
-    auto id = [&](int i, int j, int d) { return (j * nx + i) * 4 + d; };
-    using Item = std::pair<double, int>;
-    std::priority_queue<Item, std::vector<Item>, std::greater<>> open;
-    auto heur = [&](int i, int j) { return std::abs(xs[i] - xs[ei]) + std::abs(ys[j] - ys[ej]); };
-    const int start = id(si, sj, startDir);
-    dist[start] = 0;
-    open.push({heur(si, sj), start});
-    int goal = -1;
-    double best = 1e300;
-    while (!open.empty()) {
-        const auto [f, cur] = open.top();
-        open.pop();
-        if (f >= best) break;
-        const int d = cur % 4, cell = cur / 4, i = cell % nx, j = cell / nx;
-        if (f - heur(i, j) > dist[cur] + 1e-9) continue;  // stale entry
-        if (i == ei && j == ej && d != (endDir + 2) % 4) {  // arrived; no U-turn into the port
-            const double total = dist[cur] + (d == endDir ? 0 : kBend);
-            if (total < best) best = total, goal = cur;
-            continue;
-        }
-        for (int nd = 0; nd < 4; ++nd) {
-            if (nd == (d + 2) % 4) continue;  // no reversing
-            const double c = stepCost(i, j, nd);
-            if (c < 0) continue;
-            const int nxt = id(i + DX[nd], j + DY[nd], nd);
-            const double g = dist[cur] + c + (nd == d ? 0 : kBend);
-            if (g < dist[nxt]) {
-                dist[nxt] = g, prev[nxt] = cur;
-                open.push({g + heur(i + DX[nd], j + DY[nd]), nxt});
-            }
-        }
-    }
-    if (goal < 0) return {};
-    QPolygonF mid;
-    for (int c = goal; c >= 0; c = prev[c]) mid.prepend(at((c / 4) % nx, (c / 4) / nx));
-    QPolygonF pts{a};
-    if (s != a + da * kStub) pts << a + da * kStub;  // escaped a tight spot: keep the stub straight
-    pts << s << mid << e;
-    if (e != b + db * kStub) pts << b + db * kStub;
-    pts << b;
+// Orthogonal polyline a -> stub -> the user's points -> stub -> b. `path` is the user's polyline from
+// stub to stub; where an end shape has moved since, a corner joins its new stub to the user's
+// first/last point so the user's segments stay where they were put.
+QPolygonF throughPath(QPointF a, Port pa, QPointF b, Port pb, const QPolygonF& path) {
+    const QPointF s = a + portDir(pa) * kStub, e = b + portDir(pb) * kStub;
+    const QPolygonF mid = path.mid(1, path.size() - 2);
+    auto apart = [](QPointF p, QPointF q) { return std::abs(p.x() - q.x()) > 0.01 && std::abs(p.y() - q.y()) > 0.01; };
+    QPolygonF pts{a, s};
+    const bool h0 = std::abs(path.first().y() - mid.first().y()) < 0.01;  // user's first segment is horizontal
+    if (apart(s, mid.first())) pts << (h0 ? QPointF(s.x(), mid.first().y()) : QPointF(mid.first().x(), s.y()));
+    pts << mid;
+    const bool h1 = std::abs(mid.last().y() - path.last().y()) < 0.01;
+    if (apart(mid.last(), e)) pts << (h1 ? QPointF(e.x(), mid.last().y()) : QPointF(mid.last().x(), e.y()));
+    pts << e << b;
     return simplify(pts);
 }
 }  // namespace
-
-QPolygonF LinkItem::smartRoute(QPointF a, Port pa, QPointF b, Port pb) const {
-    const auto* c = chart();
-    if (!c || c->bulkLoading) return route(a, pa, b, pb);
-    const QRectF area = QRectF(a, b).normalized().adjusted(-160, -160, 160, 160);
-    QList<QRectF> blocks;
-    QList<QLineF> others;
-    for (auto* it : c->itemsNear(area)) {
-        if (auto* n = qgraphicsitem_cast<NodeItem*>(it)) {
-            if (!isContainer(n->shapeType))  // links run inside swimlanes
-                blocks << n->mapRectToScene(n->rect()).adjusted(-kClearance, -kClearance, kClearance, kClearance);
-        } else if (auto* l = qgraphicsitem_cast<LinkItem*>(it); l && l != this) {
-            const QPolygonF& q = l->points();
-            for (int i = 1; i < q.size(); ++i) others << QLineF(q[i - 1], q[i]);
-        }
-    }
-    // ponytail: crowded areas fall back to the plain elbow route; raise the cap (or grid-bucket
-    // the blocks) if dense charts need smart routes too.
-    const QPolygonF plain = route(a, pa, b, pb);
-    if (blocks.size() > 60) return plain;
-    // Fast path: keep the plain route when it already clears every shape and no other link.
-    // The link's own end shapes are skipped: it starts and ends on their outlines.
-    bool clear = true;
-    for (int i = 1; i < plain.size() && clear; ++i) {
-        const QPointF p = plain[i - 1], q = plain[i];
-        for (const QRectF& r : blocks)
-            if (!r.contains(a) && !r.contains(b) && hits(r, p, q)) clear = false;
-        for (const QLineF& o : others)
-            if (overlap(p, q, o) > 1) clear = false;
-    }
-    if (clear) return plain;
-    const QPolygonF pts = routeAround(a, pa, b, pb, blocks, others, area);
-    return pts.isEmpty() ? plain : pts;
-}
 
 QPolygonF LinkItem::route(QPointF a, Port pa, QPointF b, Port pb) {
     constexpr double stub = kStub;
@@ -671,8 +509,58 @@ void LinkItem::refresh() {
         if (fromAuto) fromPort = from->nearestPort(toAuto ? to->scenePos() : to->portScenePos(toPort));
         if (toAuto) toPort = to->nearestPort(from->portScenePos(fromPort));
     }
-    setPoints(from && to ? smartRoute(from->portScenePos(fromPort), fromPort, to->portScenePos(toPort), toPort)
-                         : QPolygonF());
+    if (!from || !to) return setPoints({});
+    const QPointF a = from->portScenePos(fromPort), b = to->portScenePos(toPort);
+    if (path.size() < 3) return setPoints(route(a, fromPort, b, toPort));
+    // Both ends moved by the same amount (group drag, container, undo of one): the path moves along.
+    const QPointF d1 = from->scenePos() - m_pathFrom, d2 = to->scenePos() - m_pathTo;
+    if (QLineF(d1, d2).length() < 0.01 && !d1.isNull()) {
+        path.translate(d1);
+        m_pathFrom += d1, m_pathTo += d1;
+    }
+    setPoints(throughPath(a, fromPort, b, toPort, path));
+}
+
+QPolygonF LinkItem::pathFromPoints(const QPolygonF& pts) const {
+    // The stubs are often merged into the runs next to them (a 3-line link is just 4 points), so put
+    // them back: without them a middle-line edit left only the two bends, too few to keep.
+    QPolygonF p = pts.mid(1, pts.size() - 2);
+    const QPointF s = pts.first() + portDir(fromPort) * kStub, e = pts.last() + portDir(toPort) * kStub;
+    if (p.isEmpty() || QLineF(p.first(), s).length() > 0.01) p.prepend(s);
+    if (QLineF(p.last(), e).length() > 0.01) p.append(e);
+    return simplify(p);
+}
+
+void LinkItem::setPath(const QPolygonF& p) {
+    path = p;
+    settlePath();
+    refresh();
+}
+
+void LinkItem::settlePath() {
+    if (from && to) m_pathFrom = from->scenePos(), m_pathTo = to->scenePos();
+}
+
+QPolygonF LinkItem::dragSegment(const QPolygonF& pts, int seg, QPointF pos) const {
+    const int n = int(pts.size());
+    const QPointF p = pts[seg], q = pts[seg + 1];
+    const bool horiz = std::abs(p.y() - q.y()) < 0.01;
+    auto moved = [&](QPointF v) { return horiz ? QPointF(v.x(), pos.y()) : QPointF(pos.x(), v.y()); };
+    QPolygonF out = pts.mid(0, seg);
+    if (seg == 0) {  // the first run leaves the port: keep its stub, bend off after it
+        const QPointF s = pts[0] + portDir(fromPort) * kStub;
+        out << pts[0] << s << moved(s);
+    } else {
+        out << moved(p);
+    }
+    if (seg + 1 == n - 1) {  // likewise for the last run
+        const QPointF e = pts[n - 1] + portDir(toPort) * kStub;
+        out << moved(e) << e << pts[n - 1];
+    } else {
+        out << moved(q);
+        out << pts.mid(seg + 2);
+    }
+    return out;
 }
 
 namespace {
@@ -733,6 +621,15 @@ bool LinkItem::showEndHandles() const {
     return isSelected() && c && !c->overlaysHidden && m_pts.size() >= 2;
 }
 
+bool LinkItem::segDraggable(int seg) const { return QLineF(m_pts[seg], m_pts[seg + 1]).length() >= 16; }
+
+int LinkItem::hitSegment(QPointF pos) const {
+    if (!showEndHandles()) return -1;
+    for (int i = 0; i + 1 < m_pts.size(); ++i)
+        if (segDraggable(i) && QLineF(pos, (m_pts[i] + m_pts[i + 1]) / 2).length() <= 8 * uiUnit()) return i;
+    return -1;
+}
+
 int LinkItem::hitEnd(QPointF pos) const {
     if (!showEndHandles()) return -1;
     const double r = 9 * uiUnit();
@@ -747,6 +644,8 @@ QPainterPath LinkItem::shape() const {
         const double r = 9 * uiUnit();
         p.addEllipse(m_pts.first(), r, r);
         p.addEllipse(m_pts.last(), r, r);
+        for (int i = 0; i + 1 < m_pts.size(); ++i)
+            if (segDraggable(i)) p.addEllipse((m_pts[i] + m_pts[i + 1]) / 2, 8 * uiUnit(), 8 * uiUnit());
     }
     return p;
 }
@@ -759,6 +658,8 @@ QVariant LinkItem::itemChange(GraphicsItemChange change, const QVariant& value) 
 
 void LinkItem::hoverMoveEvent(QGraphicsSceneHoverEvent* e) {
     if (hitEnd(e->pos()) >= 0) setCursor(Qt::CrossCursor);
+    else if (const int seg = hitSegment(e->pos()); seg >= 0)
+        setCursor(std::abs(m_pts[seg].y() - m_pts[seg + 1].y()) < 0.01 ? Qt::SizeVerCursor : Qt::SizeHorCursor);
     else unsetCursor();
 }
 
@@ -770,11 +671,17 @@ void LinkItem::mousePressEvent(QGraphicsSceneMouseEvent* e) {
             m_dragEnd = end;
             return e->accept();
         }
+        if (const int seg = hitSegment(e->pos()); seg >= 0) {
+            m_dragSeg = seg;
+            m_dragBase = m_pts;
+            return e->accept();
+        }
     }
     ChartItem::mousePressEvent(e);
 }
 
 void LinkItem::mouseMoveEvent(QGraphicsSceneMouseEvent* e) {
+    if (m_dragSeg >= 0) return setPoints(dragSegment(m_dragBase, m_dragSeg, chart()->snap(e->scenePos(), e->modifiers())));
     if (m_dragEnd < 0 || !from || !to) return ChartItem::mouseMoveEvent(e);
     // Live preview: route from the fixed end to the shape under the cursor, or to the cursor.
     NodeItem* fixed = m_dragEnd == 0 ? to : from;
@@ -796,6 +703,10 @@ void LinkItem::mouseMoveEvent(QGraphicsSceneMouseEvent* e) {
 }
 
 void LinkItem::mouseReleaseEvent(QGraphicsSceneMouseEvent* e) {
+    if (m_dragSeg >= 0) {  // keep the edited path (stub to stub) as the link's own
+        const QPolygonF pts = dragSegment(m_dragBase, std::exchange(m_dragSeg, -1), chart()->snap(e->scenePos(), e->modifiers()));
+        return chart()->setLinkPath(this, pathFromPoints(pts));
+    }
     if (m_dragEnd < 0) return ChartItem::mouseReleaseEvent(e);
     const int end = std::exchange(m_dragEnd, -1);
     chart()->setLinkTarget(nullptr);
@@ -857,6 +768,10 @@ void LinkItem::paint(QPainter* p, const QStyleOptionGraphicsItem* opt, QWidget*)
         const double r = 5 * uiUnit();
         p->drawEllipse(m_pts.first(), r, r);
         p->drawEllipse(m_pts.last(), r, r);
+        p->setBrush(kAccent);  // segment handles: drag to slide that segment sideways
+        const double h = 3.5 * uiUnit();
+        for (int i = 0; i + 1 < m_pts.size(); ++i)
+            if (segDraggable(i)) p->drawRoundedRect(QRectF((m_pts[i] + m_pts[i + 1]) / 2 - QPointF(h, h), QSizeF(2 * h, 2 * h)), h / 2, h / 2);
     }
 }
 

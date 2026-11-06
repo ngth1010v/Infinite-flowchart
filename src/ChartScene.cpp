@@ -82,24 +82,11 @@ void ChartScene::fromJson(const QJsonObject& o) {
         j["kind"] = "node";
         createItem(j);
     }
-    // Smart routes query the scene; doing that while items are still being added makes Qt
-    // rebuild its index for every link, so route once everything is in.
-    bulkLoading = true;
-    QList<LinkItem*> made;
     for (const auto& v : o["links"].toArray()) {
         QJsonObject j = v.toObject();
         j["kind"] = "link";
-        if (auto* l = qgraphicsitem_cast<LinkItem*>(createItem(j))) made << l;
+        createItem(j);
     }
-    bulkLoading = false;
-    for (auto* it : items()) {
-        const QRectF r = it->sceneBoundingRect();
-        for (int x = int(std::floor(r.left() / 400)); x <= int(std::floor(r.right() / 400)); ++x)
-            for (int y = int(std::floor(r.top() / 400)); y <= int(std::floor(r.bottom() / 400)); ++y)
-                m_near[QPoint(x, y)] << it;
-    }
-    for (auto* l : std::as_const(made)) l->refresh();
-    m_near.clear();
     m_undo->clear();
 }
 
@@ -179,6 +166,7 @@ void ChartScene::apply(const States& states) {
     }
     for (auto it = states.begin(); it != states.end(); ++it)
         if (it->isEmpty()) removeChartItem(it.key());
+    settleLinkPaths();
 }
 
 void ChartScene::push(const QString& text, const States& before, const States& after, const QString& mergeKey) {
@@ -213,8 +201,13 @@ void ChartScene::applyLinkJson(LinkItem* l, const QJsonObject& j) {
     l->text = j["text"].toString();
     l->style = styleFromJson(j["style"].toObject());
     const QString fp = j["fromPort"].toString(), tp = j["toPort"].toString();
+    l->path.clear();
     l->setEnds(nodeById(j["from"].toInt()), portFromKey(fp), nodeById(j["to"].toInt()), portFromKey(tp),
                fp == QLatin1String("auto"), tp == QLatin1String("auto"));
+    QPolygonF path;
+    for (const auto& v : j["path"].toArray())
+        if (const QJsonArray pt = v.toArray(); pt.size() == 2) path << QPointF(pt[0].toDouble(), pt[1].toDouble());
+    if (path.size() >= 3) l->setPath(path);
 }
 
 void ChartScene::removeChartItem(int id) {
@@ -276,17 +269,6 @@ NodeItem* ChartScene::nodeAt(QPointF scenePos, const NodeItem* exclude) const {
     return nullptr;
 }
 
-QList<QGraphicsItem*> ChartScene::itemsNear(const QRectF& r) const {
-    if (m_near.isEmpty()) return items(r, Qt::IntersectsItemBoundingRect);
-    QSet<QGraphicsItem*> seen;
-    QList<QGraphicsItem*> out;
-    for (int x = int(std::floor(r.left() / 400)); x <= int(std::floor(r.right() / 400)); ++x)
-        for (int y = int(std::floor(r.top() / 400)); y <= int(std::floor(r.bottom() / 400)); ++y)
-            for (auto* it : m_near.value(QPoint(x, y)))
-                if (!seen.contains(it) && it->sceneBoundingRect().intersects(r)) seen.insert(it), out << it;
-    return out;
-}
-
 bool ChartScene::isEditingText() const { return dynamic_cast<TextEditor*>(focusItem()) != nullptr; }
 
 double ChartScene::viewScale() const { return views().isEmpty() ? 1.0 : views().first()->transform().m11(); }
@@ -343,9 +325,21 @@ void ChartScene::setItemText(ChartItem* item, const QString& text) {
 
 void ChartScene::reconnectLink(LinkItem* link, bool sourceEnd, NodeItem* node, Port port, bool autoPort) {
     const States before = capture({link->id});
+    link->path.clear();  // a new end: back to the automatic route
     if (sourceEnd) link->setEnds(node, port, link->to, link->toPort, autoPort, link->toAuto);
     else link->setEnds(link->from, link->fromPort, node, port, link->fromAuto, autoPort);
     push(tr("Reconnect link"), before, capture({link->id}));
+}
+
+void ChartScene::settleLinkPaths() {
+    for (auto* c : std::as_const(m_items))
+        if (auto* l = qgraphicsitem_cast<LinkItem*>(c); l && !l->path.isEmpty()) l->settlePath();
+}
+
+void ChartScene::setLinkPath(LinkItem* link, const QPolygonF& path) {
+    const States before = capture({link->id});
+    link->setPath(path);
+    push(tr("Edit link path"), before, capture({link->id}));
 }
 
 void ChartScene::editSelected(const QString& mergeKey, const std::function<void(ChartItem*)>& fn) {
@@ -400,6 +394,10 @@ void ChartScene::paste(const QJsonObject& clip, QPointF offset) {
         j["id"] = id;
         j["from"] = idMap[f];
         j["to"] = idMap[t];
+        QJsonArray path;  // edited paths move with the pasted shapes
+        for (const auto& pv : j["path"].toArray())
+            path << QJsonArray{pv.toArray()[0].toDouble() + offset.x(), pv.toArray()[1].toDouble() + offset.y()};
+        j["path"] = path;
         if (auto* c = createItem(j)) c->setSelected(true), created << id;
     }
     if (created.isEmpty()) return;
@@ -597,16 +595,10 @@ void ChartScene::mousePressEvent(QGraphicsSceneMouseEvent* e) {
 void ChartScene::mouseReleaseEvent(QGraphicsSceneMouseEvent* e) {
     QGraphicsScene::mouseReleaseEvent(e);
     setGuides({});
+    settleLinkPaths();
     m_riders.clear();
     const States after = capture(std::exchange(m_pressIds, {}));
     for (const auto& j : after)
         if (j.isEmpty()) return;  // an item vanished mid-drag; nothing sensible to record
-    // Links that now run through a moved shape take a new way around it.
-    QSet<LinkItem*> crossed;
-    for (auto it = after.begin(); it != after.end(); ++it)
-        if (auto* n = qgraphicsitem_cast<NodeItem*>(m_items.value(it.key())))
-            for (auto* gi : items(n->mapRectToScene(n->rect())))
-                if (auto* l = qgraphicsitem_cast<LinkItem*>(gi); l && l->from != n && l->to != n) crossed << l;
-    for (auto* l : std::as_const(crossed)) l->refresh();
     push(tr("Move / resize"), m_pressState, after);
 }

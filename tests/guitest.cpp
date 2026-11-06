@@ -154,6 +154,37 @@ int main(int argc, char** argv) {
         QTest::mouseMove(vp3, at3({300, 260}));
         QTest::mouseRelease(vp3, Qt::LeftButton, {}, at3({300, 260}));
         CHECK(l->from == r && l->to == q);
+
+        // Sliding a segment: grab the handle in the middle of the selected link and drag it down.
+        s3.undoStack()->undo();  // back to p -> q, straight
+        CHECK(l->from == p && l->points().size() == 2);
+        s3.clearSelection();
+        l->setSelected(true);
+        const QPointF handle = (l->points().first() + l->points().last()) / 2;
+        QTest::mousePress(vp3, Qt::LeftButton, {}, at3(handle));
+        QTest::mouseMove(vp3, at3(handle + QPointF(0, 60)));
+        QTest::mouseMove(vp3, at3(handle + QPointF(0, 120)));
+        QTest::mouseRelease(vp3, Qt::LeftButton, {}, at3(handle + QPointF(0, 120)));
+        bool lowered = false;
+        for (int i = 1; i < l->points().size(); ++i)
+            if (std::abs(l->points()[i - 1].y() - 120) < 0.01 && std::abs(l->points()[i].y() - 120) < 0.01) lowered = true;
+        CHECK(lowered && !l->path.isEmpty() && l->from == p && l->to == q);
+        s3.undoStack()->undo();
+        CHECK(l->path.isEmpty() && l->points().size() == 2);
+
+        // 3-line link: dragging the middle line sticks where it is dropped (it used to snap back).
+        s3.beginLinkDrag(p, Port::Right);
+        s3.endLinkDrag(r->portScenePos(Port::Left) + QPointF(5, 0));
+        LinkItem* z = p->links.last();
+        CHECK(z->to == r && z->points().size() == 4);
+        s3.clearSelection();
+        z->setSelected(true);
+        const QPointF zh = (z->points()[1] + z->points()[2]) / 2;  // middle line's handle
+        QTest::mousePress(vp3, Qt::LeftButton, {}, at3(zh));
+        QTest::mouseMove(vp3, at3(zh + QPointF(-20, 0)));
+        QTest::mouseMove(vp3, at3(zh + QPointF(-40, 0)));
+        QTest::mouseRelease(vp3, Qt::LeftButton, {}, at3(zh + QPointF(-40, 0)));
+        CHECK(!z->path.isEmpty() && std::abs(z->points()[1].x() - (zh.x() - 40)) < 0.01);
     }
 
     // Containers: dragging one carries the shapes inside it; undo restores both.

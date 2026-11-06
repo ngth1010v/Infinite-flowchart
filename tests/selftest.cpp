@@ -49,20 +49,51 @@ int main(int argc, char** argv) {
             for (QPointF b : {QPointF(200, 120), QPointF(-200, -120), QPointF(0, 300), QPointF(10, -5)})
                 CHECK(orthogonal(LinkItem::route({0, 0}, pa, b, pb)));
 
-    {   // Smart routing goes around a shape sitting between the two ends.
+    {   // Editing a link's path: slide a segment sideways; the path stays as the ends move.
         ChartScene sc;
         auto* top = sc.addNode(FlowShape::Process, {0, 0});
-        auto* mid = sc.addNode(FlowShape::Process, {0, 200});
+        auto* mid = sc.addNode(FlowShape::Process, {300, 200});
         auto* bot = sc.addNode(FlowShape::Process, {0, 400});
         sc.beginLinkDrag(top, Port::Bottom);
         sc.endLinkDrag(bot->portScenePos(Port::Top) + QPointF(0, 5));
-        const QPolygonF pts = top->links.value(0) ? top->links[0]->points() : QPolygonF();
-        CHECK(pts.size() >= 4 && orthogonal(pts));
-        const QRectF block = mid->mapRectToScene(mid->rect());
-        bool clear = true;
-        for (int i = 1; i < pts.size(); ++i)
-            if (QRectF(pts[i - 1], pts[i]).normalized().adjusted(-0.1, -0.1, 0.1, 0.1).intersects(block)) clear = false;
-        CHECK(clear);
+        LinkItem* l = top->links.value(0);
+        CHECK(l && l->points().size() == 2);  // straight down
+        QPolygonF pts = l->dragSegment(l->points(), 0, {-120, 200});
+        CHECK(orthogonal(pts));
+        sc.setLinkPath(l, l->pathFromPoints(pts));
+        auto hasVertical = [](const QPolygonF& q, double x) {
+            for (int i = 1; i < q.size(); ++i)
+                if (std::abs(q[i - 1].x() - x) < 0.01 && std::abs(q[i].x() - x) < 0.01) return true;
+            return false;
+        };
+        CHECK(orthogonal(l->points()) && hasVertical(l->points(), -120));
+        bot->setPos(60, 420);  // one end moves: still orthogonal, user's segment stays put
+        CHECK(orthogonal(l->points()) && hasVertical(l->points(), -120));
+        top->setPos(top->pos() + QPointF(10, 10));
+        bot->setPos(bot->pos() + QPointF(-40, -10));  // ends moved by different amounts: path stays
+        CHECK(hasVertical(l->points(), -120));
+        sc.settleLinkPaths();  // gesture over; now both ends move together: the path moves along
+        top->setPos(top->pos() + QPointF(100, 0));
+        bot->setPos(bot->pos() + QPointF(100, 0));
+        CHECK(orthogonal(l->points()) && hasVertical(l->points(), -20));
+        const QJsonObject saved = sc.toJson();  // path survives save/load
+        ChartScene sc2;
+        sc2.fromJson(saved);
+        CHECK(sc2.toJson() == saved);
+        sc.undoStack()->undo();  // back to the automatic route
+        CHECK(l->path.isEmpty());
+
+        // A 3-line link (Z shape): sliding its middle line must stick, not snap back.
+        auto* zs = sc.addNode(FlowShape::Process, {600, 0});
+        auto* zt = sc.addNode(FlowShape::Process, {1000, 200});
+        sc.beginLinkDrag(zs, Port::Right);
+        sc.endLinkDrag(zt->portScenePos(Port::Left) + QPointF(5, 0));
+        LinkItem* z = zs->links.value(0);
+        CHECK(z && z->points().size() == 4);  // start, bend, bend, end
+        const QPolygonF zpts = z->dragSegment(z->points(), 1, {900, 100});
+        sc.setLinkPath(z, z->pathFromPoints(zpts));
+        CHECK(!z->path.isEmpty() && orthogonal(z->points()) && hasVertical(z->points(), 900));
+
         // Typing a long text grows the node; its top edge stays put.
         const double topEdge = mid->pos().y() - mid->size.height() / 2;
         sc.setItemText(mid, QString("word ").repeated(60));

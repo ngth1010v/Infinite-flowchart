@@ -1,6 +1,7 @@
 #pragma once
 #include "Model.h"
 #include <QGraphicsTextItem>
+#include <QJsonArray>
 #include <functional>
 
 class ChartScene;
@@ -122,8 +123,17 @@ public:
     void paint(QPainter* p, const QStyleOptionGraphicsItem* opt, QWidget* w) override;
 
     static QPolygonF route(QPointF a, Port pa, QPointF b, Port pb);  // plain elbow route
-    // Route that goes around nearby shapes and avoids running along other links; falls back to route().
-    QPolygonF smartRoute(QPointF a, Port pa, QPointF b, Port pb) const;
+    // User-edited path: the polyline between the two port stubs, in scene coords. Empty = automatic.
+    QPolygonF path;
+    void setPath(const QPolygonF& p);  // also notes where the end shapes are, so the path can follow them
+    // Note the end shapes' current positions as where `path` belongs. Done after each gesture/undo:
+    // within one, a path moves along only when both ends moved by the same amount.
+    void settlePath();
+    QJsonArray pathJson() const;
+    // `pts` (the link's points) after sliding segment `seg` sideways to pass through `pos`.
+    QPolygonF dragSegment(const QPolygonF& pts, int seg, QPointF pos) const;
+    // The `path` to store for link points `pts` (port to port): the polyline from stub to stub.
+    QPolygonF pathFromPoints(const QPolygonF& pts) const;
 
 protected:
     QVariant itemChange(GraphicsItemChange change, const QVariant& value) override;
@@ -136,6 +146,11 @@ protected:
 
 private:
     int m_dragEnd = -1;  // end being dragged: 0 = source, 1 = target
+    int m_dragSeg = -1;  // segment being slid sideways
+    QPolygonF m_dragBase;  // the link's points when that slide started
+    QPointF m_pathFrom, m_pathTo;  // end shape positions when `path` was set
+    bool segDraggable(int seg) const;
+    int hitSegment(QPointF pos) const;
     bool showEndHandles() const;
     int hitEnd(QPointF pos) const;
     void setPoints(const QPolygonF& pts);  // rebuild hit shape, label and bounds
