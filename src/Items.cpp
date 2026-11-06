@@ -217,12 +217,24 @@ int NodeItem::hitArrow(QPointF pos) const {
 QRectF NodeItem::boundingRect() const { return rect().adjusted(-kMargin, -kMargin, kMargin, kMargin); }
 
 QPainterPath NodeItem::shape() const {
-    QPainterPath p = m_outline;
-    p.setFillRule(Qt::WindingFill);
-    if (showArrows()) {
-        // While hovered, the zone out to the arrows belongs to the node so they stay reachable.
-        const double z = 26 * uiUnit();
-        p.addRect(rect().adjusted(-z, -z, z, z));
+    // Containers are hit only on their border and title band; clicks in the body fall through to
+    // the canvas (rubber-band selection) and the shapes inside.
+    // Containers are built with real unions: plain addPath under WindingFill would fill the hole.
+    const bool box = isContainer(shapeType);
+    const double edge = 8 * uiUnit();  // grab band on each side of a container's border
+    const double z = 26 * uiUnit();    // while hovered: out to the quick-connect arrows
+    QPainterPath p;
+    if (box) {
+        QPainterPath outer, body, header;
+        outer.addRect(rect().adjusted(-(showArrows() ? z : edge), -(showArrows() ? z : edge),
+                                      showArrows() ? z : edge, showArrows() ? z : edge));
+        body.addRect(rect().adjusted(edge, edge, -edge, -edge));
+        header.addRect(textRect());
+        p = outer.subtracted(body).united(header);
+    } else {
+        p = m_outline;
+        p.setFillRule(Qt::WindingFill);
+        if (showArrows()) p.addRect(rect().adjusted(-z, -z, z, z));  // keep the arrows reachable
     }
     if (showHandles())
         for (int i = 0; i < 4; ++i) p.addRect(handleRect(i));
@@ -663,6 +675,27 @@ void LinkItem::refresh() {
                          : QPolygonF());
 }
 
+namespace {
+// Polyline with lightly rounded corners (radius r, less on short segments).
+QPainterPath roundedPolyline(const QPolygonF& pts, double r) {
+    QPainterPath path(pts.first());
+    for (int i = 1; i + 1 < pts.size(); ++i) {
+        const QPointF v = pts[i];
+        const QLineF in(pts[i - 1], v), out(v, pts[i + 1]);
+        if (in.length() < 1e-6 || out.length() < 1e-6) {
+            path.lineTo(v);
+            continue;
+        }
+        const double d = std::min({r, in.length() / 2, out.length() / 2});
+        path.lineTo(v + (pts[i - 1] - v) * (d / in.length()));
+        path.quadTo(v, v + (pts[i + 1] - v) * (d / out.length()));
+    }
+    path.lineTo(pts.last());
+    return path;
+}
+constexpr double kLinkCorner = 8;
+}  // namespace
+
 void LinkItem::setPoints(const QPolygonF& pts) {
     prepareGeometryChange();
     m_pts = pts;
@@ -670,8 +703,7 @@ void LinkItem::setPoints(const QPolygonF& pts) {
     m_label = QRectF();
     m_bounds = QRectF();
     if (m_pts.size() < 2) return;
-    QPainterPath path;
-    path.addPolygon(m_pts);
+    const QPainterPath path = roundedPolyline(m_pts, kLinkCorner);
     QPainterPathStroker stroker;
     stroker.setWidth(std::max(10.0, style.strokeWidth + 8));
     m_shape = stroker.createStroke(path);
@@ -692,6 +724,7 @@ void LinkItem::setPoints(const QPolygonF& pts) {
     m_bounds = m_shape.boundingRect().adjusted(-a, -a, a, a);
     update();
 }
+
 
 // ---- dragging an end onto another shape (reconnect)
 
@@ -781,7 +814,8 @@ void LinkItem::paint(QPainter* p, const QStyleOptionGraphicsItem* opt, QWidget*)
     const auto* c = chart();
     if (isSelected() && !(c && c->overlaysHidden)) {
         p->setPen(QPen(QColor(37, 99, 235, 90), style.strokeWidth + 6, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
-        p->drawPolyline(m_pts);
+        p->setBrush(Qt::NoBrush);
+        p->drawPath(roundedPolyline(m_pts, kLinkCorner));
     }
     const double a = arrowSize();
     // Stop the line short of an arrow tip so thick lines don't poke out of it.
@@ -795,7 +829,7 @@ void LinkItem::paint(QPainter* p, const QStyleOptionGraphicsItem* opt, QWidget*)
     if (style.dash != Qt::NoPen && style.strokeWidth > 0) {
         p->setPen(QPen(style.stroke, style.strokeWidth, style.dash, Qt::FlatCap, Qt::MiterJoin));
         p->setBrush(Qt::NoBrush);
-        p->drawPolyline(line);
+        p->drawPath(roundedPolyline(line, kLinkCorner));
     }
     auto head = [&](QPointF prev, QPointF tip) {
         const QLineF seg(tip, prev);

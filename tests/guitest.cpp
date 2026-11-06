@@ -183,6 +183,12 @@ int main(int argc, char** argv) {
         CHECK(outside->pos() == QPointF(0, 300));
         s4.undoStack()->undo();
         CHECK(box->pos() == QPointF(0, 0) && inner->pos() == QPointF(100, 0));
+        // A click in the container's body does not select it; only its border and title band do.
+        s4.clearSelection();
+        QTest::mouseClick(vp4, Qt::LeftButton, {}, at4({0, -80}));
+        CHECK(!box->isSelected());
+        QTest::mouseClick(vp4, Qt::LeftButton, {}, at4({0, -110}));  // top border
+        CHECK(box->isSelected());
 
         // Copying a container copies what is inside it.
         s4.clearSelection();
