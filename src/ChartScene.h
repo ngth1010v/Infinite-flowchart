@@ -19,6 +19,7 @@ public:
 
     QUndoStack* undoStack() const { return m_undo; }
     bool overlaysHidden = false;  // true while rendering exports, thumbnails and the minimap
+    bool bulkLoading = false;     // fromJson in progress: links take plain routes until the end
     bool snapEnabled = true;
     QVector<QLineF> guides;       // smart alignment guides, drawn by the view
     NodeItem* linkTarget = nullptr;  // while a link end is dragged: the node showing its anchors
@@ -61,6 +62,7 @@ public:
     bool isEditingText() const;
     double viewScale() const;
     QPointF snap(QPointF p, Qt::KeyboardModifiers mods = {}) const;
+    QList<QGraphicsItem*> itemsNear(const QRectF& r) const;  // bounding rect touches r (any order)
 
     // Used by NodeItem during mouse interaction
     QPointF adjustDrag(NodeItem* n, QPointF pos);
@@ -85,6 +87,9 @@ private:
     NodeItem* m_linkSrc = nullptr;
     Port m_linkPort = Port::Bottom;
     QGraphicsPathItem* m_preview = nullptr;
+    // While fromJson routes links: items by 400x400 cell. Qt's own index is no help there: each
+    // rerouted link drops out of it until the event loop runs, and queries then scan them all.
+    QHash<QPoint, QList<QGraphicsItem*>> m_near;
 
     States capture(const QList<int>& ids) const;
     void apply(const States& states);

@@ -49,6 +49,28 @@ int main(int argc, char** argv) {
             for (QPointF b : {QPointF(200, 120), QPointF(-200, -120), QPointF(0, 300), QPointF(10, -5)})
                 CHECK(orthogonal(LinkItem::route({0, 0}, pa, b, pb)));
 
+    {   // Smart routing goes around a shape sitting between the two ends.
+        ChartScene sc;
+        auto* top = sc.addNode(FlowShape::Process, {0, 0});
+        auto* mid = sc.addNode(FlowShape::Process, {0, 200});
+        auto* bot = sc.addNode(FlowShape::Process, {0, 400});
+        sc.beginLinkDrag(top, Port::Bottom);
+        sc.endLinkDrag(bot->portScenePos(Port::Top) + QPointF(0, 5));
+        const QPolygonF pts = top->links.value(0) ? top->links[0]->points() : QPolygonF();
+        CHECK(pts.size() >= 4 && orthogonal(pts));
+        const QRectF block = mid->mapRectToScene(mid->rect());
+        bool clear = true;
+        for (int i = 1; i < pts.size(); ++i)
+            if (QRectF(pts[i - 1], pts[i]).normalized().adjusted(-0.1, -0.1, 0.1, 0.1).intersects(block)) clear = false;
+        CHECK(clear);
+        // Typing a long text grows the node; its top edge stays put.
+        const double topEdge = mid->pos().y() - mid->size.height() / 2;
+        sc.setItemText(mid, QString("word ").repeated(60));
+        CHECK(mid->size.height() > 70 && std::abs(mid->pos().y() - mid->size.height() / 2 - topEdge) < 0.01);
+        sc.undoStack()->undo();
+        CHECK(std::abs(mid->size.height() - 70) < 0.01);
+    }
+
     // Build: two nodes, connect by dragging from A's bottom arrow onto B.
     ChartScene s;
     auto* a = s.addNode(FlowShape::Process, {0, 0});

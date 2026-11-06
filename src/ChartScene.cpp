@@ -82,11 +82,24 @@ void ChartScene::fromJson(const QJsonObject& o) {
         j["kind"] = "node";
         createItem(j);
     }
+    // Smart routes query the scene; doing that while items are still being added makes Qt
+    // rebuild its index for every link, so route once everything is in.
+    bulkLoading = true;
+    QList<LinkItem*> made;
     for (const auto& v : o["links"].toArray()) {
         QJsonObject j = v.toObject();
         j["kind"] = "link";
-        createItem(j);
+        if (auto* l = qgraphicsitem_cast<LinkItem*>(createItem(j))) made << l;
     }
+    bulkLoading = false;
+    for (auto* it : items()) {
+        const QRectF r = it->sceneBoundingRect();
+        for (int x = int(std::floor(r.left() / 400)); x <= int(std::floor(r.right() / 400)); ++x)
+            for (int y = int(std::floor(r.top() / 400)); y <= int(std::floor(r.bottom() / 400)); ++y)
+                m_near[QPoint(x, y)] << it;
+    }
+    for (auto* l : std::as_const(made)) l->refresh();
+    m_near.clear();
     m_undo->clear();
 }
 
@@ -263,6 +276,17 @@ NodeItem* ChartScene::nodeAt(QPointF scenePos, const NodeItem* exclude) const {
     return nullptr;
 }
 
+QList<QGraphicsItem*> ChartScene::itemsNear(const QRectF& r) const {
+    if (m_near.isEmpty()) return items(r, Qt::IntersectsItemBoundingRect);
+    QSet<QGraphicsItem*> seen;
+    QList<QGraphicsItem*> out;
+    for (int x = int(std::floor(r.left() / 400)); x <= int(std::floor(r.right() / 400)); ++x)
+        for (int y = int(std::floor(r.top() / 400)); y <= int(std::floor(r.bottom() / 400)); ++y)
+            for (auto* it : m_near.value(QPoint(x, y)))
+                if (!seen.contains(it) && it->sceneBoundingRect().intersects(r)) seen.insert(it), out << it;
+    return out;
+}
+
 bool ChartScene::isEditingText() const { return dynamic_cast<TextEditor*>(focusItem()) != nullptr; }
 
 double ChartScene::viewScale() const { return views().isEmpty() ? 1.0 : views().first()->transform().m11(); }
@@ -312,6 +336,7 @@ void ChartScene::deleteSelected() {
 void ChartScene::setItemText(ChartItem* item, const QString& text) {
     const States before = capture({item->id});
     item->text = text;
+    if (auto* n = qgraphicsitem_cast<NodeItem*>(item)) n->growToFit(text, n->size.height());  // grow only
     item->refresh();
     push(tr("Edit text"), before, capture({item->id}));
 }
@@ -576,5 +601,12 @@ void ChartScene::mouseReleaseEvent(QGraphicsSceneMouseEvent* e) {
     const States after = capture(std::exchange(m_pressIds, {}));
     for (const auto& j : after)
         if (j.isEmpty()) return;  // an item vanished mid-drag; nothing sensible to record
+    // Links that now run through a moved shape take a new way around it.
+    QSet<LinkItem*> crossed;
+    for (auto it = after.begin(); it != after.end(); ++it)
+        if (auto* n = qgraphicsitem_cast<NodeItem*>(m_items.value(it.key())))
+            for (auto* gi : items(n->mapRectToScene(n->rect())))
+                if (auto* l = qgraphicsitem_cast<LinkItem*>(gi); l && l->from != n && l->to != n) crossed << l;
+    for (auto* l : std::as_const(crossed)) l->refresh();
     push(tr("Move / resize"), m_pressState, after);
 }

@@ -60,6 +60,10 @@ public:
     void refresh() override;
     void startEdit();
     void cancelEdit();
+    // Height the node needs to show `t` at its current width (text area padding included).
+    double textHeight(const QString& t) const;
+    // Set the height to max(minHeight, textHeight(t)), keeping the top edge in place.
+    void growToFit(const QString& t, double minHeight);
 
     QRectF boundingRect() const override;
     QPainterPath shape() const override;
@@ -117,7 +121,9 @@ public:
     QPainterPath shape() const override;
     void paint(QPainter* p, const QStyleOptionGraphicsItem* opt, QWidget* w) override;
 
-    static QPolygonF route(QPointF a, Port pa, QPointF b, Port pb);
+    static QPolygonF route(QPointF a, Port pa, QPointF b, Port pb);  // plain elbow route
+    // Route that goes around nearby shapes and avoids running along other links; falls back to route().
+    QPolygonF smartRoute(QPointF a, Port pa, QPointF b, Port pb) const;
 
 protected:
     QVariant itemChange(GraphicsItemChange change, const QVariant& value) override;

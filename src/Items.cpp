@@ -10,7 +10,9 @@
 #include <QStyleOptionGraphicsItem>
 #include <QTextCursor>
 #include <QTextDocument>
+#include <algorithm>
 #include <cmath>
+#include <queue>
 #include <utility>
 
 namespace {
@@ -122,7 +124,10 @@ void NodeItem::startEdit() {
     ed->document()->setDefaultTextOption(opt);
     ed->setPlainText(text);
     ed->setTextInteractionFlags(Qt::TextEditorInteraction);
-    auto place = [this, ed, rotated] {
+    const QSizeF startSize = size;
+    const QPointF startPos = pos();
+    auto place = [this, ed, rotated, startSize] {
+        if (!rotated) growToFit(ed->toPlainText(), startSize.height());  // live: grow while typing
         const QRectF b = textRect();
         const double eh = ed->boundingRect().height();
         if (rotated) ed->setPos(b.center().x() - eh / 2, b.bottom() - 8);
@@ -133,16 +138,38 @@ void NodeItem::startEdit() {
     QTextCursor c(ed->document());
     c.select(QTextCursor::Document);
     ed->setTextCursor(c);
-    ed->done = [this, ed](bool commit) {
+    ed->done = [this, ed, startSize, startPos](bool commit) {
         const QString t = ed->toPlainText();
         m_editor = nullptr;
         ed->hide();
         ed->deleteLater();
-        update();
+        // Undo the live growth; setItemText grows again as one undoable step.
+        size = startSize;
+        setPos(startPos);
+        refresh();
         if (commit && t != text && chart()) chart()->setItemText(this, t);
     };
     ed->setFocus();
     update();
+}
+
+double NodeItem::textHeight(const QString& t) const {
+    const QFontMetricsF fm(styleFont(style));
+    const double w = std::max(10.0, rect().width() - 16);  // paint() keeps 8 px each side
+    const int flags = int(style.align) | Qt::TextWordWrap;
+    double h = fm.boundingRect(QRectF(0, 0, w, 1e6), flags, t.isEmpty() ? QStringLiteral(" ") : t).height();
+    h += 8 + 16;  // paint() keeps 4 px top and bottom, plus some breathing room
+    if (shapeType == FlowShape::Decision) h *= 2;  // text sits in the diamond's middle
+    return h;
+}
+
+void NodeItem::growToFit(const QString& t, double minHeight) {
+    if (isContainer(shapeType)) return;  // container titles live in the header band
+    const double h = std::max(minHeight, textHeight(t));
+    if (std::abs(h - size.height()) < 0.5) return;
+    setPos(pos() + QPointF(0, (h - size.height()) / 2));
+    size.setHeight(h);
+    refresh();
 }
 
 void NodeItem::cancelEdit() {
@@ -402,10 +429,199 @@ QPolygonF simplify(const QPolygonF& in) {
 }
 }  // namespace
 
-// ponytail: elbow routing with a fixed stub; links may cross other nodes. Add obstacle-avoiding
-// routing (A* on a sparse grid) if users ask for it.
+namespace {
+constexpr double kStub = 20;       // straight run out of a port before the first bend
+constexpr double kClearance = 12;  // gap kept between a link and the shapes it passes
+
+bool inside(const QRectF& r, QPointF p) {  // strictly inside: running along an edge is fine
+    return p.x() > r.left() + 1e-6 && p.x() < r.right() - 1e-6 && p.y() > r.top() + 1e-6 && p.y() < r.bottom() - 1e-6;
+}
+
+// Push p along d until it is out of every block.
+QPointF escape(QPointF p, QPointF d, const QList<QRectF>& blocks) {
+    for (int guard = 0; guard < 16; ++guard) {
+        bool moved = false;
+        for (const QRectF& r : blocks)
+            if (inside(r, p)) {
+                if (d.x() > 0) p.setX(r.right());
+                else if (d.x() < 0) p.setX(r.left());
+                else if (d.y() > 0) p.setY(r.bottom());
+                else p.setY(r.top());
+                moved = true;
+            }
+        if (!moved) break;
+    }
+    return p;
+}
+
+// Does the axis-aligned segment pq pass through the inside of r?
+bool hits(const QRectF& r, QPointF p, QPointF q) {
+    const QRectF s = QRectF(p, q).normalized();
+    return s.right() > r.left() + 1e-6 && s.left() < r.right() - 1e-6 && s.bottom() > r.top() + 1e-6 &&
+           s.top() < r.bottom() - 1e-6;
+}
+
+// Length of pq that runs on top of (within 6 units of, parallel to) another link segment.
+double overlap(QPointF p, QPointF q, const QLineF& o) {
+    const bool horiz = std::abs(p.y() - q.y()) < 0.5;
+    const bool oh = std::abs(o.y1() - o.y2()) < 0.5, ov = std::abs(o.x1() - o.x2()) < 0.5;
+    if (horiz && oh && std::abs(o.y1() - p.y()) < 6)
+        return std::max(0.0, std::min(std::max(p.x(), q.x()), std::max(o.x1(), o.x2())) -
+                                 std::max(std::min(p.x(), q.x()), std::min(o.x1(), o.x2())));
+    if (!horiz && ov && std::abs(o.x1() - p.x()) < 6)
+        return std::max(0.0, std::min(std::max(p.y(), q.y()), std::max(o.y1(), o.y2())) -
+                                 std::max(std::min(p.y(), q.y()), std::min(o.y1(), o.y2())));
+    return 0;
+}
+
+QList<double> gridLines(QList<double> v) {
+    std::sort(v.begin(), v.end());
+    QList<double> u;
+    for (double x : v)
+        if (u.isEmpty() || x - u.last() > 0.5) u << x;
+    QList<double> out;  // add the middle of each gap: spare lanes so links can run side by side
+    for (int i = 0; i < u.size(); ++i) {
+        if (i > 0 && u[i] - u[i - 1] > 16) out << (u[i] + u[i - 1]) / 2;
+        out << u[i];
+    }
+    return out;
+}
+
+// Orthogonal A* over a sparse grid made from the blocks' edges. Cost = length + bends + time spent
+// on top of (or crossing) other links. Empty result when there is no way through.
+QPolygonF routeAround(QPointF a, Port pa, QPointF b, Port pb, const QList<QRectF>& blocks,
+                      const QList<QLineF>& others, const QRectF& area) {
+    const QPointF da = portDir(pa), db = portDir(pb);
+    const QPointF s = escape(a + da * kStub, da, blocks), e = escape(b + db * kStub, db, blocks);
+    QList<double> xv{s.x(), e.x(), area.left(), area.right()}, yv{s.y(), e.y(), area.top(), area.bottom()};
+    for (const QRectF& r : blocks) xv << r.left() << r.right(), yv << r.top() << r.bottom();
+    const QList<double> xs = gridLines(xv), ys = gridLines(yv);
+    const int nx = int(xs.size()), ny = int(ys.size());
+    if (qint64(nx) * ny > 40000) return {};
+    auto at = [&](int i, int j) { return QPointF(xs[i], ys[j]); };
+    auto find = [](const QList<double>& v, double x) {
+        return int(std::min_element(v.begin(), v.end(), [x](double p, double q) { return std::abs(p - x) < std::abs(q - x); }) - v.begin());
+    };
+    const int si = find(xs, s.x()), sj = find(ys, s.y()), ei = find(xs, e.x()), ej = find(ys, e.y());
+
+    // Directions: 0 right, 1 down, 2 left, 3 up.
+    static const int DX[4] = {1, 0, -1, 0}, DY[4] = {0, 1, 0, -1};
+    auto dirOf = [](QPointF d) { return d.x() > 0 ? 0 : d.y() > 0 ? 1 : d.x() < 0 ? 2 : 3; };
+    const int startDir = dirOf(da), endDir = dirOf(-db);  // last run heads into b, against db
+
+    // Step cost from grid point (i, j) one step in direction d; < 0 = blocked.
+    auto stepCost = [&](int i, int j, int d) -> double {
+        const int i2 = i + DX[d], j2 = j + DY[d];
+        if (i2 < 0 || j2 < 0 || i2 >= nx || j2 >= ny) return -1;
+        const QPointF p = at(i, j), q = at(i2, j2), mid = (p + q) / 2;
+        for (const QRectF& r : blocks)
+            if (inside(r, q) || inside(r, mid)) return -1;
+        const double len = QLineF(p, q).length();
+        double cost = len;
+        const bool horiz = DY[d] == 0;
+        for (const QLineF& o : others) {
+            const bool oh = std::abs(o.y1() - o.y2()) < 0.5, ov = std::abs(o.x1() - o.x2()) < 0.5;
+            if (const double run = overlap(p, q, o); run > 1) {  // running along another link
+                cost += run * 4;
+            } else if (horiz && ov) {  // crossing another link
+                const double x = o.x1();
+                if (x > std::min(p.x(), q.x()) && x < std::max(p.x(), q.x()) && p.y() > std::min(o.y1(), o.y2()) &&
+                    p.y() < std::max(o.y1(), o.y2()))
+                    cost += 15;
+            } else if (!horiz && oh) {
+                const double y = o.y1();
+                if (y > std::min(p.y(), q.y()) && y < std::max(p.y(), q.y()) && p.x() > std::min(o.x1(), o.x2()) &&
+                    p.x() < std::max(o.x1(), o.x2()))
+                    cost += 15;
+            }
+        }
+        return cost;
+    };
+
+    constexpr double kBend = 30;
+    const int n = nx * ny * 4;
+    QList<double> dist(n, 1e300);
+    QList<int> prev(n, -1);
+    auto id = [&](int i, int j, int d) { return (j * nx + i) * 4 + d; };
+    using Item = std::pair<double, int>;
+    std::priority_queue<Item, std::vector<Item>, std::greater<>> open;
+    auto heur = [&](int i, int j) { return std::abs(xs[i] - xs[ei]) + std::abs(ys[j] - ys[ej]); };
+    const int start = id(si, sj, startDir);
+    dist[start] = 0;
+    open.push({heur(si, sj), start});
+    int goal = -1;
+    double best = 1e300;
+    while (!open.empty()) {
+        const auto [f, cur] = open.top();
+        open.pop();
+        if (f >= best) break;
+        const int d = cur % 4, cell = cur / 4, i = cell % nx, j = cell / nx;
+        if (f - heur(i, j) > dist[cur] + 1e-9) continue;  // stale entry
+        if (i == ei && j == ej && d != (endDir + 2) % 4) {  // arrived; no U-turn into the port
+            const double total = dist[cur] + (d == endDir ? 0 : kBend);
+            if (total < best) best = total, goal = cur;
+            continue;
+        }
+        for (int nd = 0; nd < 4; ++nd) {
+            if (nd == (d + 2) % 4) continue;  // no reversing
+            const double c = stepCost(i, j, nd);
+            if (c < 0) continue;
+            const int nxt = id(i + DX[nd], j + DY[nd], nd);
+            const double g = dist[cur] + c + (nd == d ? 0 : kBend);
+            if (g < dist[nxt]) {
+                dist[nxt] = g, prev[nxt] = cur;
+                open.push({g + heur(i + DX[nd], j + DY[nd]), nxt});
+            }
+        }
+    }
+    if (goal < 0) return {};
+    QPolygonF mid;
+    for (int c = goal; c >= 0; c = prev[c]) mid.prepend(at((c / 4) % nx, (c / 4) / nx));
+    QPolygonF pts{a};
+    if (s != a + da * kStub) pts << a + da * kStub;  // escaped a tight spot: keep the stub straight
+    pts << s << mid << e;
+    if (e != b + db * kStub) pts << b + db * kStub;
+    pts << b;
+    return simplify(pts);
+}
+}  // namespace
+
+QPolygonF LinkItem::smartRoute(QPointF a, Port pa, QPointF b, Port pb) const {
+    const auto* c = chart();
+    if (!c || c->bulkLoading) return route(a, pa, b, pb);
+    const QRectF area = QRectF(a, b).normalized().adjusted(-160, -160, 160, 160);
+    QList<QRectF> blocks;
+    QList<QLineF> others;
+    for (auto* it : c->itemsNear(area)) {
+        if (auto* n = qgraphicsitem_cast<NodeItem*>(it)) {
+            if (!isContainer(n->shapeType))  // links run inside swimlanes
+                blocks << n->mapRectToScene(n->rect()).adjusted(-kClearance, -kClearance, kClearance, kClearance);
+        } else if (auto* l = qgraphicsitem_cast<LinkItem*>(it); l && l != this) {
+            const QPolygonF& q = l->points();
+            for (int i = 1; i < q.size(); ++i) others << QLineF(q[i - 1], q[i]);
+        }
+    }
+    // ponytail: crowded areas fall back to the plain elbow route; raise the cap (or grid-bucket
+    // the blocks) if dense charts need smart routes too.
+    const QPolygonF plain = route(a, pa, b, pb);
+    if (blocks.size() > 60) return plain;
+    // Fast path: keep the plain route when it already clears every shape and no other link.
+    // The link's own end shapes are skipped: it starts and ends on their outlines.
+    bool clear = true;
+    for (int i = 1; i < plain.size() && clear; ++i) {
+        const QPointF p = plain[i - 1], q = plain[i];
+        for (const QRectF& r : blocks)
+            if (!r.contains(a) && !r.contains(b) && hits(r, p, q)) clear = false;
+        for (const QLineF& o : others)
+            if (overlap(p, q, o) > 1) clear = false;
+    }
+    if (clear) return plain;
+    const QPolygonF pts = routeAround(a, pa, b, pb, blocks, others, area);
+    return pts.isEmpty() ? plain : pts;
+}
+
 QPolygonF LinkItem::route(QPointF a, Port pa, QPointF b, Port pb) {
-    constexpr double stub = 20;
+    constexpr double stub = kStub;
     const QPointF da = portDir(pa), db = portDir(pb);
     const QPointF s = a + da * stub, e = b + db * stub;
     const bool ha = da.y() == 0, hb = db.y() == 0;
@@ -443,7 +659,7 @@ void LinkItem::refresh() {
         if (fromAuto) fromPort = from->nearestPort(toAuto ? to->scenePos() : to->portScenePos(toPort));
         if (toAuto) toPort = to->nearestPort(from->portScenePos(fromPort));
     }
-    setPoints(from && to ? route(from->portScenePos(fromPort), fromPort, to->portScenePos(toPort), toPort)
+    setPoints(from && to ? smartRoute(from->portScenePos(fromPort), fromPort, to->portScenePos(toPort), toPort)
                          : QPolygonF());
 }
 
