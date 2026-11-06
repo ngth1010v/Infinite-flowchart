@@ -247,6 +247,24 @@ int main(int argc, char** argv) {
         QTest::mouseClick(vp4, Qt::LeftButton, {}, at4({0, -110}));  // top border
         CHECK(box->isSelected());
 
+        // A link leaving the container's right side lies over that side's edge handle (links draw
+        // above containers); the handle still wins, so the drag resizes the container.
+        auto* far = s4.addNode(FlowShape::Process, {600, 0});
+        s4.beginLinkDrag(box, Port::Right);
+        s4.endLinkDrag(far->portScenePos(Port::Left));
+        CHECK(box->links.size() == 1);
+        s4.clearSelection();
+        box->setSelected(true);
+        const double w0 = box->size.width();
+        QTest::mouseMove(vp4, at4({324, 2}));
+        QTest::mousePress(vp4, Qt::LeftButton, {}, at4({324, 2}));
+        QTest::mouseMove(vp4, at4({350, 2}));
+        QTest::mouseMove(vp4, at4({380, 2}));
+        QTest::mouseRelease(vp4, Qt::LeftButton, {}, at4({380, 2}));
+        CHECK(std::abs(box->size.width() - (w0 + 60)) < 0.01);
+        s4.undoStack()->undo();
+        CHECK(std::abs(box->size.width() - w0) < 0.01);
+
         // Copying a container copies what is inside it.
         s4.clearSelection();
         box->setSelected(true);

@@ -17,7 +17,7 @@
 
 namespace {
 const QColor kAccent(37, 99, 235);
-constexpr double kMargin = 48;  // room around a node for handles and quick-connect arrows
+constexpr double kMargin = 64;  // room around a node for handles and quick-connect arrows (at 2x uiUnit)
 constexpr double kMinSize = 20;
 }  // namespace
 
@@ -76,7 +76,7 @@ int NodeItem::hitAnchor(QPointF scenePos) const {
     const QPointF p = mapFromScene(scenePos);
     if (QLineF(p, QPointF()).length() <= 14 * uiUnit()) return 4;
     for (int i = 0; i < 4; ++i)
-        if (QLineF(p, m_ports[i]).length() <= 12 * uiUnit()) return i;
+        if (QLineF(p, m_ports[i]).length() <= 16 * uiUnit()) return i;
     return -1;
 }
 
@@ -229,18 +229,23 @@ QRectF NodeItem::handleRect(int handle) const {
 
 QPointF NodeItem::arrowPos(int port) const { return m_ports[port] + portDir(Port(port)) * (18 * uiUnit()); }
 
+// Grab area of a handle: wider than it is drawn, so it is easy to hit.
+QRectF NodeItem::handleHitRect(int handle) const {
+    const double pad = 6 * uiUnit();
+    return handleRect(handle).adjusted(-pad, -pad, pad, pad);
+}
+
 int NodeItem::hitHandle(QPointF pos) const {
     if (!showHandles()) return -1;
-    const double pad = 2 * uiUnit();
     for (int i = 0; i < kHandles; ++i)
-        if (handleRect(i).adjusted(-pad, -pad, pad, pad).contains(pos)) return i;
+        if (handleHitRect(i).contains(pos)) return i;
     return -1;
 }
 
 int NodeItem::hitArrow(QPointF pos) const {
     if (!showArrows()) return -1;
     for (int i = 0; i < 4; ++i)
-        if (QLineF(pos, arrowPos(i)).length() <= 8 * uiUnit()) return i;
+        if (QLineF(pos, arrowPos(i)).length() <= 12 * uiUnit()) return i;
     return -1;
 }
 
@@ -249,8 +254,8 @@ QPainterPath NodeItem::shape() const {
     // the canvas (rubber-band selection) and the shapes inside.
     // Containers are built with real unions: plain addPath under WindingFill would fill the hole.
     const bool box = isContainer(shapeType);
-    const double edge = 8 * uiUnit();  // grab band on each side of a container's border
-    const double z = 26 * uiUnit();    // while hovered: out to the quick-connect arrows
+    const double edge = 12 * uiUnit();  // grab band on each side of a container's border
+    const double z = 32 * uiUnit();    // while hovered: out past the quick-connect arrows
     QPainterPath p;
     if (box) {
         QPainterPath outer, body, header;
@@ -264,8 +269,14 @@ QPainterPath NodeItem::shape() const {
         p.setFillRule(Qt::WindingFill);
         if (showArrows()) p.addRect(rect().adjusted(-z, -z, z, z));  // keep the arrows reachable
     }
-    if (showHandles())
-        for (int i = 0; i < kHandles; ++i) p.addRect(handleRect(i));
+    if (showHandles()) {
+        QPainterPath grips;
+        for (int i = 0; i < kHandles; ++i) grips.addRect(handleHitRect(i));
+        // A container's path comes from boolean ops (odd-even fill): an added handle overlapping
+        // its border band would cancel out into a hole there, so unite instead.
+        if (box) p = p.united(grips);
+        else p.addPath(grips);
+    }
     return p;
 }
 
@@ -659,7 +670,7 @@ void LinkItem::setPoints(const QPolygonF& pts) {
     if (m_pts.size() < 2) return;
     const QPainterPath path = roundedPolyline(m_pts, kLinkCorner);
     QPainterPathStroker stroker;
-    stroker.setWidth(std::max(10.0, style.strokeWidth + 8));
+    stroker.setWidth(std::max(14.0, style.strokeWidth + 10));
     m_shape = stroker.createStroke(path);
     m_shape.setFillRule(Qt::WindingFill);
     if (!text.isEmpty() || m_editor) {
@@ -687,7 +698,7 @@ void LinkItem::setPoints(const QPolygonF& pts) {
         m_label = line.intersects(sides[0]) && !line.intersects(sides[1]) ? sides[1] : sides[0];
         m_shape.addRect(m_label);
     }
-    const double a = std::max(arrowSize() + 6, 20.0);  // also room for the end handles
+    const double a = std::max(arrowSize() + 6, 24.0);  // also room for the end handles (12 x uiUnit, up to 2)
     m_bounds = m_shape.boundingRect().adjusted(-a, -a, a, a);
     update();
 }
@@ -705,13 +716,13 @@ bool LinkItem::segDraggable(int seg) const { return QLineF(m_pts[seg], m_pts[seg
 int LinkItem::hitSegment(QPointF pos) const {
     if (!showEndHandles()) return -1;
     for (int i = 0; i + 1 < m_pts.size(); ++i)
-        if (segDraggable(i) && QLineF(pos, (m_pts[i] + m_pts[i + 1]) / 2).length() <= 8 * uiUnit()) return i;
+        if (segDraggable(i) && QLineF(pos, (m_pts[i] + m_pts[i + 1]) / 2).length() <= 11 * uiUnit()) return i;
     return -1;
 }
 
 int LinkItem::hitEnd(QPointF pos) const {
     if (!showEndHandles()) return -1;
-    const double r = 9 * uiUnit();
+    const double r = 12 * uiUnit();
     if (QLineF(pos, m_pts.first()).length() <= r) return 0;
     if (QLineF(pos, m_pts.last()).length() <= r) return 1;
     return -1;
@@ -720,11 +731,11 @@ int LinkItem::hitEnd(QPointF pos) const {
 QPainterPath LinkItem::shape() const {
     QPainterPath p = m_shape;
     if (showEndHandles()) {
-        const double r = 9 * uiUnit();
+        const double r = 12 * uiUnit();
         p.addEllipse(m_pts.first(), r, r);
         p.addEllipse(m_pts.last(), r, r);
         for (int i = 0; i + 1 < m_pts.size(); ++i)
-            if (segDraggable(i)) p.addEllipse((m_pts[i] + m_pts[i + 1]) / 2, 8 * uiUnit(), 8 * uiUnit());
+            if (segDraggable(i)) p.addEllipse((m_pts[i] + m_pts[i + 1]) / 2, 11 * uiUnit(), 11 * uiUnit());
     }
     return p;
 }

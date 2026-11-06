@@ -605,8 +605,32 @@ void ChartScene::moveContents(NodeItem* container, QPointF delta) {
     for (auto* n : m_riders.value(container)) n->moveBy(delta.x(), delta.y());
 }
 
+namespace {
+// Containers sit under their contents and links, which can cover the container's handles and
+// quick-connect arrows. Over one of those, lift the container to the top only while the event is
+// routed, so it gets the click or keeps its hover. Nothing paints in between, so nothing shows.
+template <class F>
+void withGripOnTop(const ChartScene* scene, QPointF pos, F route) {
+    NodeItem* lifted = nullptr;
+    if (!scene->mouseGrabberItem())
+        for (auto* it : scene->items(pos, Qt::IntersectsItemBoundingRect))
+            if (auto* n = qgraphicsitem_cast<NodeItem*>(it); n && isContainer(n->shapeType) && n->hitGrip(pos)) {
+                lifted = n;
+                break;
+            }
+    const double z = lifted ? lifted->zValue() : 0;
+    if (lifted) lifted->setZValue(1e9);
+    route();
+    if (lifted) lifted->setZValue(z);
+}
+}  // namespace
+
+void ChartScene::mouseMoveEvent(QGraphicsSceneMouseEvent* e) {
+    withGripOnTop(this, e->scenePos(), [&] { QGraphicsScene::mouseMoveEvent(e); });
+}
+
 void ChartScene::mousePressEvent(QGraphicsSceneMouseEvent* e) {
-    QGraphicsScene::mousePressEvent(e);
+    withGripOnTop(this, e->scenePos(), [&] { QGraphicsScene::mousePressEvent(e); });
     m_pressIds.clear();
     m_riders.clear();
     QSet<NodeItem*> moving;

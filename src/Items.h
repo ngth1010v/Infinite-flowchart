@@ -58,6 +58,11 @@ public:
     // Anchor shown while a link end is dragged near this node: 0-3 = side Port, 4 = center, -1 = none.
     int hitAnchor(QPointF scenePos) const;
     bool hitBody(QPointF scenePos) const { return m_outline.contains(mapFromScene(scenePos)); }
+    // A resize handle or quick-connect arrow is under scenePos.
+    bool hitGrip(QPointF scenePos) const {
+        const QPointF p = mapFromScene(scenePos);
+        return hitHandle(p) >= 0 || hitArrow(p) >= 0;
+    }
 
     void setFromJson(const QJsonObject& j);
     QJsonObject toJson() const override;
@@ -98,6 +103,7 @@ private:
     bool showHandles() const;
     bool showArrows() const;
     QRectF handleRect(int handle) const;
+    QRectF handleHitRect(int handle) const;
     QPointF arrowPos(int port) const;
     int hitHandle(QPointF pos) const;
     int hitArrow(QPointF pos) const;
