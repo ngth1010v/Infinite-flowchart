@@ -1,5 +1,7 @@
 #include "Model.h"
+#include <QLineF>
 #include <QPolygonF>
+#include <QTransform>
 #include <algorithm>
 #include <cmath>
 #include <iterator>
@@ -73,7 +75,50 @@ FlowShape shapeFromKey(const QString& key) {
     return FlowShape::Process;
 }
 
-QPainterPath shapeOutline(FlowShape s, const QRectF& r) {
+// Light rounded corners: every sharp turn (> 20 degrees) in the path becomes a short curve.
+// ponytail: works on the flattened path (4x finer than Qt's default), so curves turn into short
+// lines; fine at normal zoom. Round line/curve joins analytically if deep zoom shows facets.
+static QPainterPath roundCorners(const QPainterPath& path, double radius) {
+    QPainterPath out;
+    const QTransform up = QTransform::fromScale(4, 4), down = QTransform::fromScale(0.25, 0.25);
+    for (QPolygonF poly : path.toSubpathPolygons(up)) {
+        poly = down.map(poly);
+        const bool closed = poly.size() > 2 && poly.first() == poly.last();
+        if (closed) poly.removeLast();
+        const int n = int(poly.size());
+        if (n < 2) continue;
+        QList<QPointF> a(n), b(n);  // where each corner's curve starts and ends
+        QList<bool> round(n, false);
+        for (int i = 0; i < n; ++i) {
+            a[i] = b[i] = poly[i];
+            if (!closed && (i == 0 || i == n - 1)) continue;
+            const QPointF v = poly[i], pv = poly[(i + n - 1) % n], nx = poly[(i + 1) % n];
+            const QLineF in(pv, v), outLine(v, nx);
+            if (in.length() < 1e-9 || outLine.length() < 1e-9) continue;
+            const double turn = in.angleTo(outLine);
+            if (std::min(turn, 360 - turn) <= 20) continue;
+            const double d = std::min({radius, in.length() / 2, outLine.length() / 2});
+            a[i] = v + (pv - v) * (d / in.length());
+            b[i] = v + (nx - v) * (d / outLine.length());
+            round[i] = true;
+        }
+        out.moveTo(b[0]);
+        for (int i = 1; i < n; ++i) {
+            out.lineTo(a[i]);
+            if (round[i]) out.quadTo(poly[i], b[i]);
+        }
+        if (closed) {
+            out.lineTo(a[0]);
+            if (round[0]) out.quadTo(poly[0], b[0]);
+            out.closeSubpath();
+        }
+    }
+    return out;
+}
+
+static double cornerRadius(const QRectF& r) { return std::min(6.0, std::min(r.width(), r.height()) * 0.12); }
+
+static QPainterPath sharpOutline(FlowShape s, const QRectF& r) {
     const double l = r.left(), t = r.top(), rt = r.right(), b = r.bottom();
     const double w = r.width(), h = r.height(), cx = r.center().x(), cy = r.center().y();
     QPainterPath p;
@@ -169,6 +214,8 @@ QPainterPath shapeOutline(FlowShape s, const QRectF& r) {
     return p;
 }
 
+QPainterPath shapeOutline(FlowShape s, const QRectF& r) { return roundCorners(sharpOutline(s, r), cornerRadius(r)); }
+
 QPainterPath shapeDecoration(FlowShape s, const QRectF& r) {
     const double l = r.left(), t = r.top(), rt = r.right(), b = r.bottom();
     const double w = r.width(), h = r.height(), cx = r.center().x(), cy = r.center().y();
@@ -187,6 +234,7 @@ QPainterPath shapeDecoration(FlowShape s, const QRectF& r) {
         // Front page outline plus the visible part of the middle page.
         p = documentPath(f.translated(o, -o)).subtracted(front);
         p.addPath(front);
+        p = roundCorners(p, cornerRadius(r));  // match the rounded outline
         break;
     }
     case FlowShape::Database: {

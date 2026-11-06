@@ -38,7 +38,7 @@ int main(int argc, char** argv) {
         CHECK(shapeFromKey(shapeKey(s)) == s);
     }
     const QPointF top = shapePort(FlowShape::Decision, QRectF(-50, -50, 100, 100), Port::Top);
-    CHECK(std::abs(top.x()) < 0.1 && std::abs(top.y() + 50) < 0.1);
+    CHECK(std::abs(top.x()) < 0.1 && top.y() > -50.1 && top.y() < -46);  // tip, a little in for the rounded corner
     const QPointF left = shapePort(FlowShape::InputOutput, QRectF(-100, -50, 200, 100), Port::Left);
     CHECK(left.x() > -95);  // slanted side: port sits on the slant, not the bounding box
 
