@@ -323,7 +323,7 @@ void ChartView::moveEvent(QMoveEvent* e) {
 void ChartView::resizeEvent(QResizeEvent* e) {
     QGraphicsView::resizeEvent(e);
     keepContentInPlace();
-    m_minimap->move(width() - m_minimap->width() - 12, height() - m_minimap->height() - 12);
+    m_minimap->move(width() - m_minimap->width() - 12, 12);
     m_minimap->raise();
 }
 
