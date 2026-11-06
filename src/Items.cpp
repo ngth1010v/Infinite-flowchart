@@ -128,7 +128,10 @@ void NodeItem::startEdit() {
     const QSizeF startSize = size;
     const QPointF startPos = pos();
     auto place = [this, ed, rotated, startSize] {
-        if (!rotated) growToFit(ed->toPlainText(), startSize.height());  // live: grow while typing
+        if (!rotated) {  // live: grow while typing, and wrap at the new width
+            growToFit(ed->toPlainText(), startSize);
+            ed->setTextWidth(std::max(10.0, textRect().width() - 16));
+        }
         const QRectF b = textRect();
         const double eh = ed->boundingRect().height();
         if (rotated) ed->setPos(b.center().x() - eh / 2, b.bottom() - 8);
@@ -154,22 +157,43 @@ void NodeItem::startEdit() {
     update();
 }
 
-double NodeItem::textHeight(const QString& t) const {
+double NodeItem::textHeight(const QString& t, double width) const {
     const QFontMetricsF fm(styleFont(style));
-    const double w = std::max(10.0, rect().width() - 16);  // paint() keeps 8 px each side
     const int flags = int(style.align) | Qt::TextWordWrap;
-    double h = fm.boundingRect(QRectF(0, 0, w, 1e6), flags, t.isEmpty() ? QStringLiteral(" ") : t).height();
-    h += 8 + 16;  // paint() keeps 4 px top and bottom, plus some breathing room
-    if (shapeType == FlowShape::Decision) h *= 2;  // text sits in the diamond's middle
-    return h;
+    const double h = fm.boundingRect(QRectF(0, 0, std::max(10.0, width), 1e6), flags, t.isEmpty() ? QStringLiteral(" ") : t).height();
+    return h + 8 + 16;  // paint() keeps 4 px top and bottom, plus some breathing room
 }
 
-void NodeItem::growToFit(const QString& t, double minHeight) {
+void NodeItem::growToFit(const QString& t, QSizeF minSize) {
     if (isContainer(shapeType)) return;  // container titles live in the header band
-    const double h = std::max(minHeight, textHeight(t));
-    if (std::abs(h - size.height()) < 0.5) return;
-    setPos(pos() + QPointF(0, (h - size.height()) / 2));
-    size.setHeight(h);
+    // Widen first, up to kMaxTextWidth, so long text reads in lines, not a tall column; a single
+    // longer word widens past it, since word wrap cannot break it. Then grow the height to fit.
+    constexpr double kMaxTextWidth = 320;
+    const QFontMetricsF fm(styleFont(style));
+    double lineW = 0, wordW = 0;
+    for (const QString& line : t.split('\n')) {
+        lineW = std::max(lineW, fm.horizontalAdvance(line));
+        for (const QString& word : line.split(' ', Qt::SkipEmptyParts)) wordW = std::max(wordW, fm.horizontalAdvance(word));
+    }
+    const double needW = std::max(std::min(lineW, kMaxTextWidth), wordW) + 16 + 2;  // paint() keeps 8 px each side
+    // The text area is an inset of the node (shapeTextRect), so grow the node until that area fits.
+    QSizeF sz = minSize;
+    for (int i = 0; i < 20; ++i) {
+        const QRectF area = shapeTextRect(shapeType, QRectF(QPointF(), sz));
+        if (area.width() < needW - 0.5) {
+            sz.rwidth() += (needW - area.width()) * sz.width() / std::max(1.0, area.width());
+            continue;
+        }
+        const double needH = textHeight(t, area.width() - 16);
+        if (area.height() < needH - 0.5) {
+            sz.rheight() += (needH - area.height()) * sz.height() / std::max(1.0, area.height());
+            continue;
+        }
+        break;
+    }
+    if (std::abs(sz.width() - size.width()) < 0.5 && std::abs(sz.height() - size.height()) < 0.5) return;
+    setPos(pos() + QPointF(0, (sz.height() - size.height()) / 2));  // keep the top edge; width grows both ways
+    size = sz;
     refresh();
 }
 

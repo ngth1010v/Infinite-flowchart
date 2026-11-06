@@ -98,8 +98,25 @@ int main(int argc, char** argv) {
         const double topEdge = mid->pos().y() - mid->size.height() / 2;
         sc.setItemText(mid, QString("word ").repeated(60));
         CHECK(mid->size.height() > 70 && std::abs(mid->pos().y() - mid->size.height() / 2 - topEdge) < 0.01);
+        CHECK(mid->size.width() > 300 && mid->size.width() < 345);  // widened up to the cap, then taller
         sc.undoStack()->undo();
-        CHECK(std::abs(mid->size.height() - 70) < 0.01);
+        CHECK(std::abs(mid->size.height() - 70) < 0.01 && std::abs(mid->size.width() - 140) < 0.01);
+        // One long word with no spaces cannot wrap, so the node widens to fit it.
+        sc.setItemText(mid, QString("x").repeated(80));
+        CHECK(mid->size.width() > QFontMetricsF(QFont()).horizontalAdvance(QString("x").repeated(40)));
+        sc.undoStack()->undo();
+    }
+
+    {   // Long text grows every shape so its text area stays inside the outline (round ends, cut corners).
+        ChartScene sc;
+        for (int k = 0; k < int(FlowShape::HContainer); ++k) {
+            auto* n = sc.addNode(FlowShape(k), {0, 0});
+            sc.setItemText(n, QString("word ").repeated(40));
+            const QRectF tr = n->textRect().adjusted(8, 4, -8, -4);
+            const QPainterPath out = shapeOutline(n->shapeType, n->rect());
+            CHECK(out.contains(tr.topLeft()) && out.contains(tr.topRight()) && out.contains(tr.bottomLeft()) &&
+                  out.contains(tr.bottomRight()));
+        }
     }
 
     // Build: two nodes, connect by dragging from A's bottom arrow onto B.

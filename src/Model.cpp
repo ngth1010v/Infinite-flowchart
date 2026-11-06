@@ -299,6 +299,35 @@ QPointF shapePort(FlowShape s, const QRectF& r, Port p) {
 
 bool isContainer(FlowShape s) { return s == FlowShape::HContainer || s == FlowShape::VContainer; }
 
+QRectF shapeTextRect(FlowShape s, const QRectF& r) {
+    const double w = r.width(), h = r.height();
+    double l = 0, t = 0, rt = 0, b = 0;  // insets from each side
+    switch (s) {
+    case FlowShape::Terminator: l = rt = std::min(w, h) / 2 * 0.7; break;  // keep out of the round ends
+    case FlowShape::PredefinedProcess: l = rt = w * 0.1; break;              // between the side bars
+    case FlowShape::Decision: l = rt = w / 4; t = b = h / 4; break;         // rectangle inscribed in the diamond
+    case FlowShape::InputOutput:
+    case FlowShape::ManualOperation:
+    case FlowShape::Preparation: l = rt = w * 0.15; break;
+    case FlowShape::Document: b = h * 0.2; break;  // above the wavy edge
+    case FlowShape::MultiDocument: {
+        double o;
+        const QRectF f = multiDocFront(r, o);
+        return f.adjusted(0, 0, 0, -f.height() * 0.2);
+    }
+    case FlowShape::ManualInput: t = h * 0.3; break;
+    case FlowShape::Connector: l = rt = w * 0.146; t = b = h * 0.146; break;  // rectangle inscribed in the ellipse
+    case FlowShape::OffPageConnector: l = rt = w * 0.15; b = h * 0.3; break;
+    case FlowShape::Database: t = h * 0.24; b = h * 0.12; break;
+    case FlowShape::StoredData: l = rt = w * 0.1; break;
+    case FlowShape::Delay: rt = std::min(w, h) / 2 * 0.7; break;
+    case FlowShape::Display: l = w * 0.15; rt = w * 0.1; break;
+    case FlowShape::LoopLimit: l = rt = t = std::min(w, h) * 0.125; break;  // below the cut corners
+    default: break;
+    }
+    return r.adjusted(l, t, -rt, -b);
+}
+
 QRectF containerHeader(FlowShape s, const QRectF& r) {
     if (s == FlowShape::HContainer) return {r.left(), r.top(), std::min(kContainerHeader, r.width()), r.height()};
     return {r.left(), r.top(), r.width(), std::min(kContainerHeader, r.height())};

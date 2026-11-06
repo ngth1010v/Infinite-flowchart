@@ -49,7 +49,7 @@ public:
     QList<LinkItem*> links;
 
     QRectF rect() const { return {-size.width() / 2, -size.height() / 2, size.width(), size.height()}; }
-    QRectF textRect() const { return isContainer(shapeType) ? containerHeader(shapeType, rect()) : rect(); }
+    QRectF textRect() const { return isContainer(shapeType) ? containerHeader(shapeType, rect()) : shapeTextRect(shapeType, rect()); }
     QPointF portScenePos(Port p) const { return mapToScene(m_ports[int(p)]); }
     Port nearestPort(QPointF scenePos) const;
     // Anchor shown while a link end is dragged near this node: 0-3 = side Port, 4 = center, -1 = none.
@@ -61,10 +61,10 @@ public:
     void refresh() override;
     void startEdit();
     void cancelEdit();
-    // Height the node needs to show `t` at its current width (text area padding included).
-    double textHeight(const QString& t) const;
-    // Set the height to max(minHeight, textHeight(t)), keeping the top edge in place.
-    void growToFit(const QString& t, double minHeight);
+    // Height the text area needs to show `t` wrapped at `width` (padding included).
+    double textHeight(const QString& t, double width) const;
+    // Grow (never below minSize) so `t` fits: wider first, then taller. The top edge stays in place.
+    void growToFit(const QString& t, QSizeF minSize);
 
     QRectF boundingRect() const override;
     QPainterPath shape() const override;

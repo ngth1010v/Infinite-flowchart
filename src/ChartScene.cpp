@@ -318,7 +318,7 @@ void ChartScene::deleteSelected() {
 void ChartScene::setItemText(ChartItem* item, const QString& text) {
     const States before = capture({item->id});
     item->text = text;
-    if (auto* n = qgraphicsitem_cast<NodeItem*>(item)) n->growToFit(text, n->size.height());  // grow only
+    if (auto* n = qgraphicsitem_cast<NodeItem*>(item)) n->growToFit(text, n->size);  // grow only
     item->refresh();
     push(tr("Edit text"), before, capture({item->id}));
 }
