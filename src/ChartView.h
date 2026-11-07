@@ -14,6 +14,7 @@ public:
     static constexpr double kMinZoom = 0.02, kMaxZoom = 50.0;
     double zoom() const { return transform().m11(); }
     void zoomBy(double factor, bool atMouse = true);
+    void zoomAt(double factor, const QPoint& viewportPos);  // keeps the scene point at viewportPos fixed
     void fitAll();     // Ctrl+R
     void resetZoom();  // Ctrl+0
     void resetView();  // 100% centered on origin (new chart)

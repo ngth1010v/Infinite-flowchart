@@ -115,6 +115,20 @@ void ChartView::zoomBy(double factor, bool atMouse) {
     viewChanged();
 }
 
+void ChartView::zoomAt(double factor, const QPoint& viewportPos) {
+    const double z = std::clamp(zoom() * factor, kMinZoom, kMaxZoom);
+    if (std::abs(z - zoom()) < 1e-9) return;
+    const QPointF under = mapToScene(viewportPos);
+    setTransformationAnchor(NoAnchor);
+    scale(z / zoom(), z / zoom());
+    setTransformationAnchor(AnchorUnderMouse);
+    // Scroll so the point that was under viewportPos is back under it.
+    const QPoint drift = mapFromScene(under) - viewportPos;
+    horizontalScrollBar()->setValue(horizontalScrollBar()->value() + drift.x());
+    verticalScrollBar()->setValue(verticalScrollBar()->value() + drift.y());
+    viewChanged();
+}
+
 void ChartView::fitAll() {
     const QRectF r = chart()->contentRect();
     if (r.isNull()) return resetView();
@@ -214,7 +228,8 @@ void ChartView::wheelEvent(QWheelEvent* e) {
         horizontalScrollBar()->setValue(horizontalScrollBar()->value() - e->angleDelta().y());
         return e->accept();
     }
-    zoomBy(std::pow(1.0015, e->angleDelta().y()));
+    // Use the event's own position, not the live cursor (Qt's AnchorUnderMouse reads QCursor::pos()).
+    zoomAt(std::pow(1.0015, e->angleDelta().y()), e->position().toPoint());
     e->accept();
 }
 
