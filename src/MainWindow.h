@@ -35,6 +35,7 @@ private:
     QScrollArea* m_panelScroll;
     QWidget* m_paletteBox;
     QToolButton* m_paletteToggle;
+    QToolButton* m_shortcutsButton;
     QVariantAnimation m_leftAnim, m_rightAnim;  // slide the side panels open/closed
     QToolButton* m_panelToggle;
     QAction* m_panelAction;
@@ -48,6 +49,7 @@ private:
     QAction* makeAction(QMenu* menu, const QString& text, const QList<QKeySequence>& keys,
                        const std::function<void()>& fn, bool chartOnly = true);
     void buildMenus();
+    void showShortcuts();  // full-window list of every keyboard shortcut
     bool onChart() const;
     void showHome();
     void showChart();

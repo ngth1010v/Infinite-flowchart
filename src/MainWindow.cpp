@@ -6,6 +6,7 @@
 #include <QApplication>
 #include <QBuffer>
 #include <QClipboard>
+#include <QDialog>
 #include <QCloseEvent>
 #include <QDir>
 #include <QFileDialog>
@@ -18,6 +19,7 @@
 #include <QMessageBox>
 #include <QMimeData>
 #include <QPainter>
+#include <QRegularExpression>
 #include <QSaveFile>
 #include <QScrollArea>
 #include <QSettings>
@@ -58,6 +60,12 @@ MainWindow::MainWindow() {
     connect(m_paletteToggle, &QToolButton::clicked, this, [this] { setPaletteCollapsed(!m_paletteCollapsed); });
     pl->addWidget(m_paletteToggle, 0, Qt::AlignRight);
     pl->addWidget(m_palette, 1);
+    m_shortcutsButton = new QToolButton;
+    m_shortcutsButton->setAutoRaise(true);
+    m_shortcutsButton->setToolTip(tr("Keyboard shortcuts (F1)"));
+    m_shortcutsButton->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    connect(m_shortcutsButton, &QToolButton::clicked, this, &MainWindow::showShortcuts);
+    pl->addWidget(m_shortcutsButton);
 
     m_panel = new StylePanel(m_scene);
     m_panelScroll = new QScrollArea;
@@ -231,6 +239,71 @@ void MainWindow::buildMenus() {
     dark->setCheckable(true);
     dark->setChecked(QSettings().value("dark", false).toBool());
     connect(dark, &QAction::toggled, this, &MainWindow::applyTheme);
+
+    auto* help = menuBar()->addMenu(tr("&Help"));
+    makeAction(help, tr("&Keyboard shortcuts"), {QKeySequence(Qt::Key_F1)}, [this] { showShortcuts(); }, false);
+}
+
+void MainWindow::showShortcuts() {
+    // Menu shortcuts are read from the menus, so they never go stale; canvas keys live in ChartView.
+    auto group = [](const QString& title, const QList<std::pair<QString, QString>>& rows) {
+        QString h = QStringLiteral("<h3>%1</h3><table cellspacing=0 cellpadding=4>").arg(title.toHtmlEscaped());
+        for (const auto& [keys, what] : rows)
+            h += QStringLiteral("<tr><td style='padding-right:24px'><b>%1</b></td><td>%2</td></tr>")
+                     .arg(keys.toHtmlEscaped(), what.toHtmlEscaped());
+        return h + QStringLiteral("</table>");
+    };
+    QStringList groups;
+    for (auto* m : menuBar()->actions()) {
+        if (!m->menu()) continue;
+        QList<std::pair<QString, QString>> rows;
+        for (auto* a : m->menu()->actions()) {
+            if (a->shortcuts().isEmpty()) continue;
+            QStringList keys;
+            for (const auto& k : a->shortcuts()) keys << k.toString(QKeySequence::NativeText);
+            QString text = a->text();
+            text.remove(QRegularExpression(QStringLiteral("&(?!&)")));  // mnemonic marks; "&&" becomes "&"
+            rows.append({keys.join(QLatin1String(" / ")), text.remove(QStringLiteral("…"))});
+        }
+        if (!rows.isEmpty()) groups << group(QString(m->text()).remove('&'), rows);
+    }
+    groups << group(tr("Canvas"), {{tr("Ctrl+Arrow"), tr("Align selected shapes to that side")},
+                                   {tr("Ctrl+Shift+Arrow"), tr("Align and space evenly")},
+                                   {tr("Wheel"), tr("Zoom around the cursor")},
+                                   {tr("Shift+Wheel"), tr("Pan sideways")},
+                                   {tr("Space+drag / Right-drag / Middle-drag"), tr("Pan")},
+                                   {tr("Alt while dragging"), tr("Place freely (no snap)")},
+                                   {tr("Esc"), tr("Cancel link drag, clear selection")}})
+           << group(tr("Text"), {{tr("Double-click"), tr("Edit a shape's text or a link's label")},
+                                 {tr("Enter"), tr("Done")},
+                                 {tr("Shift+Enter"), tr("New line")},
+                                 {tr("Esc"), tr("Cancel")}});
+    QString html = QStringLiteral("<table cellspacing=24><tr>");
+    for (int i = 0; i < groups.size(); ++i) {
+        if (i && i % 3 == 0) html += QStringLiteral("</tr><tr>");
+        html += QStringLiteral("<td valign=top>") + groups[i] + QStringLiteral("</td>");
+    }
+    html += QStringLiteral("</tr></table>");
+
+    QDialog dlg(this, Qt::FramelessWindowHint);
+    dlg.setGeometry(geometry());  // covers the whole window; Esc or Close dismisses it
+    auto* v = new QVBoxLayout(&dlg);
+    auto* top = new QHBoxLayout;
+    auto* title = new QLabel(QStringLiteral("<h2>%1</h2>").arg(tr("Keyboard shortcuts")));
+    auto* close = new QToolButton;
+    close->setText(tr("Close (Esc)"));
+    connect(close, &QToolButton::clicked, &dlg, &QDialog::accept);
+    top->addWidget(title, 1);
+    top->addWidget(close);
+    v->addLayout(top);
+    auto* body = new QLabel(html);
+    body->setAlignment(Qt::AlignTop | Qt::AlignHCenter);
+    auto* scroll = new QScrollArea;
+    scroll->setWidget(body);
+    scroll->setWidgetResizable(true);
+    scroll->setFrameShape(QFrame::NoFrame);
+    v->addWidget(scroll, 1);
+    dlg.exec();
 }
 
 // ---------------------------------------------------------------- screens
@@ -492,6 +565,7 @@ void MainWindow::setPaletteCollapsed(bool collapsed, bool animate) {
     m_paletteCollapsed = collapsed;
     QSettings().setValue("paletteCollapsed", collapsed);
     m_paletteToggle->setText(collapsed ? QStringLiteral("»") : QStringLiteral("«"));
+    m_shortcutsButton->setText(collapsed ? QStringLiteral("⌨") : tr("⌨  Shortcuts"));
     if (!collapsed) m_palette->setCompact(false);  // names back before growing; removed after shrinking
     const int to = collapsed ? kPaletteClosed : kPaletteOpen;
     m_leftAnim.stop();
