@@ -262,6 +262,13 @@ void ChartView::keyPressEvent(QKeyEvent* e) {
             chart()->clearSelection();
             return e->accept();
         }
+        // Ctrl+arrow aligns the selected shapes to that side; Ctrl+Shift+arrow also spaces them evenly.
+        const int k = e->key();
+        if ((e->modifiers() & Qt::ControlModifier) &&
+            (k == Qt::Key_Left || k == Qt::Key_Right || k == Qt::Key_Up || k == Qt::Key_Down)) {
+            chart()->alignSelectedShapes(Qt::Key(k), e->modifiers() & Qt::ShiftModifier);
+            return e->accept();
+        }
         // Typing on a lone selected link starts editing its label; the key goes on into the editor.
         const auto sel = chart()->selectedItems();
         auto* link = sel.size() == 1 ? qgraphicsitem_cast<LinkItem*>(sel.first()) : nullptr;

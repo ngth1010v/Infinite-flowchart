@@ -517,6 +517,60 @@ bool ChartScene::bundleSelectedLinks() {
     return true;
 }
 
+bool ChartScene::alignSelectedShapes(Qt::Key key, bool distribute) {
+    if (isEditingText()) return false;
+    QList<NodeItem*> shapes;
+    for (auto* c : selectedChartItems())
+        if (auto* n = qgraphicsitem_cast<NodeItem*>(c); n && !isContainer(n->shapeType)) shapes << n;
+    if (shapes.size() < 2) return false;
+    QList<int> ids;
+    for (auto* n : shapes) {
+        ids << n->id;
+        for (auto* l : std::as_const(n->links)) ids << l->id;  // settled paths change too
+    }
+    ids = QSet<int>(ids.begin(), ids.end()).values();
+    const States before = capture(ids);
+    auto box = [](NodeItem* n) { return n->mapRectToScene(n->rect()); };
+    const bool horiz = key == Qt::Key_Up || key == Qt::Key_Down;  // edges line up along a horizontal line
+    // Align: every shape's edge onto the outermost one.
+    double edge = key == Qt::Key_Left || key == Qt::Key_Up ? 1e300 : -1e300;
+    for (auto* n : shapes) {
+        const QRectF r = box(n);
+        switch (key) {
+        case Qt::Key_Left: edge = std::min(edge, r.left()); break;
+        case Qt::Key_Right: edge = std::max(edge, r.right()); break;
+        case Qt::Key_Up: edge = std::min(edge, r.top()); break;
+        default: edge = std::max(edge, r.bottom()); break;
+        }
+    }
+    for (auto* n : shapes) {
+        const QRectF r = box(n);
+        const double d = key == Qt::Key_Left ? edge - r.left() : key == Qt::Key_Right ? edge - r.right()
+                       : key == Qt::Key_Up   ? edge - r.top()  : edge - r.bottom();
+        n->setPos(n->pos() + (horiz ? QPointF(0, d) : QPointF(d, 0)));
+    }
+    // Distribute: equal gaps along the other axis, first and last shape stay put.
+    if (distribute) {
+        auto lo = [&](NodeItem* n) { return horiz ? box(n).left() : box(n).top(); };
+        auto len = [&](NodeItem* n) { return horiz ? box(n).width() : box(n).height(); };
+        std::sort(shapes.begin(), shapes.end(), [&](NodeItem* a, NodeItem* b) { return lo(a) < lo(b); });
+        double span = 0, total = 0;
+        for (auto* n : shapes) span = std::max(span, lo(n) + len(n)), total += len(n);
+        span -= lo(shapes.first());
+        // Shapes already in a line across this axis would pile up: keep a minimum gap instead.
+        const double gap = std::max(20.0, (span - total) / (shapes.size() - 1));
+        double at = lo(shapes.first());
+        for (auto* n : shapes) {
+            const double d = at - lo(n);
+            n->setPos(n->pos() + (horiz ? QPointF(d, 0) : QPointF(0, d)));
+            at += len(n) + gap;
+        }
+    }
+    settleLinkPaths();
+    push(distribute ? tr("Align and distribute") : tr("Align"), before, capture(ids));
+    return true;
+}
+
 void ChartScene::editSelected(const QString& mergeKey, const std::function<void(ChartItem*)>& fn) {
     QList<int> ids;
     for (auto* c : selectedChartItems()) ids << c->id;

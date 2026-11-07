@@ -93,6 +93,36 @@ int main(int argc, char** argv) {
         CHECK(a->points() == oldA && b->points() == oldB);
     }
 
+    // Ctrl+arrow aligns shapes (containers left alone); Ctrl+Shift+arrow also spaces them evenly.
+    {
+        ChartScene sc;
+        auto* a = sc.addNode(FlowShape::Process, {0, 0});
+        auto* b = sc.addNode(FlowShape::Process, {70, 200});
+        auto* c = sc.addNode(FlowShape::Process, {-50, 500});
+        auto* box = sc.addNode(FlowShape::VContainer, {1000, 1000});
+        b->size = QSizeF(200, 60), b->refresh();
+        auto left = [](NodeItem* n) { return n->mapRectToScene(n->rect()).left(); };
+        auto top = [](NodeItem* n) { return n->mapRectToScene(n->rect()).top(); };
+        auto bottom = [](NodeItem* n) { return n->mapRectToScene(n->rect()).bottom(); };
+        const QPointF boxPos = box->pos(), cPos = c->pos();
+        sc.clearSelection();
+        a->setSelected(true), box->setSelected(true);
+        CHECK(!sc.alignSelectedShapes(Qt::Key_Left, false));  // one shape + a container
+        b->setSelected(true), c->setSelected(true);
+        const double minLeft = std::min({left(a), left(b), left(c)});
+        CHECK(sc.alignSelectedShapes(Qt::Key_Left, false));
+        CHECK(left(a) == minLeft && left(b) == minLeft && left(c) == minLeft);
+        CHECK(box->pos() == boxPos && c->pos().y() == cPos.y());
+        sc.undoStack()->undo();
+        CHECK(c->pos() == cPos);
+        b->setPos(70, 50);  // uneven gaps: a-b small, b-c large
+        const double first = top(a), last = bottom(c);
+        CHECK(sc.alignSelectedShapes(Qt::Key_Left, true));
+        CHECK(top(a) == first && bottom(c) == last);
+        CHECK(std::abs((top(b) - bottom(a)) - (top(c) - bottom(b))) < 1e-6);
+        CHECK(box->pos() == boxPos);
+    }
+
     // Random segment drags and shape moves never leave a slanted segment.
     srand(7);
     auto rnd = [](double a, double b) { return a + (b - a) * (rand() / double(RAND_MAX)); };

@@ -58,6 +58,10 @@ public:
     // Selection is only links, 2 or more: move their middle segments so they overlap where they
     // can, moving as little as possible. Returns false (nothing done) for any other selection.
     bool bundleSelectedLinks();
+    // 2+ shapes selected (containers and links in the selection are left alone): line up their
+    // left / right / top / bottom edges for Key_Left / Right / Up / Down. With distribute, also
+    // space them evenly along the other axis. Returns false (nothing done) when fewer than 2 shapes.
+    bool alignSelectedShapes(Qt::Key key, bool distribute);
     void settleLinkPaths();  // see LinkItem::settlePath
     void editSelected(const QString& mergeKey, const std::function<void(ChartItem*)>& fn);
     QJsonObject copySelection() const;
