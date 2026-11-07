@@ -571,6 +571,32 @@ bool ChartScene::alignSelectedShapes(Qt::Key key, bool distribute) {
     return true;
 }
 
+bool ChartScene::fitSelectedShapes() {
+    if (isEditingText()) return false;
+    QList<NodeItem*> shapes;
+    for (auto* c : selectedChartItems())
+        if (auto* n = qgraphicsitem_cast<NodeItem*>(c); n && !isContainer(n->shapeType)) shapes << n;
+    if (shapes.isEmpty()) return false;
+    QList<int> ids;
+    for (auto* n : shapes) {
+        ids << n->id;
+        for (auto* l : std::as_const(n->links)) ids << l->id;  // settled paths change too
+    }
+    ids = QSet<int>(ids.begin(), ids.end()).values();
+    const States before = capture(ids);
+    QSizeF common;
+    for (auto* n : shapes) {
+        n->growToFit(n->text, QSizeF(40, 30));  // from a small floor, so it shrinks as well as grows
+        common = common.expandedTo(n->size);
+    }
+    // Several shapes: all take the widest width and tallest height, so every text still fits.
+    if (shapes.size() > 1)
+        for (auto* n : shapes) n->size = common, n->refresh();
+    settleLinkPaths();
+    push(tr("Fit to content"), before, capture(ids));
+    return true;
+}
+
 void ChartScene::editSelected(const QString& mergeKey, const std::function<void(ChartItem*)>& fn) {
     QList<int> ids;
     for (auto* c : selectedChartItems()) ids << c->id;

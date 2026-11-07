@@ -198,7 +198,10 @@ void MainWindow::buildMenus() {
     });
 
     auto* view = menuBar()->addMenu(tr("&View"));
-    makeAction(view, tr("&Fit whole chart"), {QKeySequence(Qt::CTRL | Qt::Key_R)}, [this] { m_view->fitAll(); });
+    // Ctrl+R fits the selected shapes to their text; with no shape selected it fits the whole chart in view.
+    makeAction(view, tr("&Fit selected shapes to text / fit whole chart"), {QKeySequence(Qt::CTRL | Qt::Key_R)}, [this] {
+        if (!m_scene->fitSelectedShapes()) m_view->fitAll();
+    });
     makeAction(view, tr("Actual size (100%)"), {QKeySequence(Qt::CTRL | Qt::Key_0)}, [this] { m_view->resetZoom(); });
     makeAction(view, tr("Zoom &in"), {QKeySequence(Qt::CTRL | Qt::Key_Equal), QKeySequence(Qt::CTRL | Qt::Key_Plus)},
                [this] { m_view->zoomBy(1.25, false); });

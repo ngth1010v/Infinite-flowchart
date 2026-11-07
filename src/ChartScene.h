@@ -62,6 +62,9 @@ public:
     // left / right / top / bottom edges for Key_Left / Right / Up / Down. With distribute, also
     // space them evenly along the other axis. Returns false (nothing done) when fewer than 2 shapes.
     bool alignSelectedShapes(Qt::Key key, bool distribute);
+    // Shapes in the selection (containers and links left alone) resize to fit their text; with 2+,
+    // they then all take the largest width and height. Returns false (nothing done) when no shapes.
+    bool fitSelectedShapes();
     void settleLinkPaths();  // see LinkItem::settlePath
     void editSelected(const QString& mergeKey, const std::function<void(ChartItem*)>& fn);
     QJsonObject copySelection() const;

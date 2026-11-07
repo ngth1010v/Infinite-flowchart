@@ -123,6 +123,30 @@ int main(int argc, char** argv) {
         CHECK(box->pos() == boxPos);
     }
 
+    // Ctrl+R fits shapes to their text (containers left alone); 2+ shapes then share the largest size.
+    {
+        ChartScene sc;
+        auto* a = sc.addNode(FlowShape::Process, {0, 0});
+        auto* b = sc.addNode(FlowShape::Process, {0, 300});
+        auto* box = sc.addNode(FlowShape::VContainer, {1000, 1000});
+        a->text = "hi", b->text = "a much longer label that needs a wide shape";
+        a->size = QSizeF(500, 400), a->refresh();
+        const QSizeF boxSize = box->size, aBig = a->size;
+        sc.clearSelection();
+        box->setSelected(true);
+        CHECK(!sc.fitSelectedShapes());  // only a container
+        a->setSelected(true);
+        CHECK(sc.fitSelectedShapes());
+        CHECK(a->size.width() < aBig.width() && a->size.height() < aBig.height());  // shrinks
+        const QSizeF aFit = a->size;
+        b->setSelected(true);
+        CHECK(sc.fitSelectedShapes());
+        CHECK(a->size == b->size && b->size.width() > aFit.width());
+        CHECK(box->size == boxSize);
+        sc.undoStack()->undo();
+        CHECK(a->size == aFit);
+    }
+
     // Random segment drags and shape moves never leave a slanted segment.
     srand(7);
     auto rnd = [](double a, double b) { return a + (b - a) * (rand() / double(RAND_MAX)); };
