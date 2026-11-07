@@ -2,6 +2,7 @@
 #include "Model.h"
 #include <QGraphicsTextItem>
 #include <QJsonArray>
+#include <QStaticText>
 #include <functional>
 
 class ChartScene;
@@ -28,11 +29,15 @@ public:
     int id = 0;
     Style style;
     QString text;
+    // Drawn into the view's still-image layer for the current drag (see ChartView::updateDragLayer);
+    // while that layer shows, the item does not paint itself on screen.
+    bool baked = false;
 
     ChartScene* chart() const;
     virtual QJsonObject toJson() const = 0;
     virtual void refresh() = 0;  // re-derive geometry after changing the fields above
     void cancelEdit();  // drop an open inline text editor without committing
+    bool skipPaint() const;  // baked and the drag layer is showing
 
 protected:
     double uiUnit() const;  // scene units per screen pixel, so handles keep a steady on-screen size
@@ -68,6 +73,8 @@ public:
     QJsonObject toJson() const override;
     void refresh() override;
     void startEdit();
+    bool isLinking() const { return m_mode == Mode::Link; }  // dragging out a new link from an arrow
+    bool isResizing() const { return m_mode == Mode::Resize; }
     // Height the text area needs to show `t` wrapped at `width` (padding included).
     double textHeight(const QString& t, double width) const;
     // Grow (never below minSize) so `t` fits: wider first, then taller. The top edge stays in place.
@@ -99,6 +106,16 @@ private:
     QPointF m_fixedCorner, m_movingCorner;
     bool m_lockX = false, m_lockY = false;  // edge handle: that axis keeps its size
     QPointF m_prevPos;  // to know how far a container moved, so its contents follow
+    // Laid-out text, kept between paints (see drawTextIn); redone when these keys change.
+    QStaticText m_textLayout;
+    QString m_layoutText;
+    QFont m_layoutFont;
+    double m_layoutWidth = -1;
+    Qt::Alignment m_layoutAlign;
+    void drawTextIn(QPainter* p, const QRectF& box);
+    mutable QPainterPath m_shapeCache;  // last shape() result, see there
+    mutable int m_shapeCacheKey = -1;   // -1 = stale
+    mutable double m_shapeCacheU = 0;
 
     bool showHandles() const;
     bool showArrows() const;

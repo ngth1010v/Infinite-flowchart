@@ -54,7 +54,9 @@ ChartScene::ChartScene(QObject* parent) : QGraphicsScene(parent), m_undo(new QUn
     m_undo->setUndoLimit(300);
     // Resize handles show only for a single selection, so repaint selected nodes when it changes.
     connect(this, &QGraphicsScene::selectionChanged, this, [this] {
-        for (auto* it : selectedItems()) it->update();
+        const auto sel = selectedItems();
+        m_selectionSize = int(sel.size());
+        for (auto* it : sel) it->update();
     });
 }
 
@@ -290,6 +292,7 @@ void ChartScene::clearAll() {
     m_preview = nullptr;
     clear();  // node and link destructors unhook from each other, so order does not matter
     m_items.clear();
+    m_selectionSize = 0;
     m_nextId = 1;
     guides.clear();
     m_pressIds.clear();
@@ -828,6 +831,17 @@ void ChartScene::endLinkDrag(QPointF pos) {
 }
 
 // ---------------------------------------------------------------- move / resize undo
+
+QList<ChartItem*> ChartScene::dragMovingItems() const {
+    auto* g = qgraphicsitem_cast<NodeItem*>(mouseGrabberItem());
+    if (!g || g->isLinking()) return {};
+    QSet<ChartItem*> out{g};
+    for (int id : m_pressIds)  // selected shapes and what selected containers carry
+        if (auto* n = nodeById(id)) out << n;
+    for (auto* c : QSet<ChartItem*>(out))
+        for (auto* l : std::as_const(static_cast<NodeItem*>(c)->links)) out << l;
+    return out.values();
+}
 
 void ChartScene::moveContents(NodeItem* container, QPointF delta) {
     for (auto* n : m_riders.value(container)) n->moveBy(delta.x(), delta.y());

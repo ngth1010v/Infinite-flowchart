@@ -20,6 +20,8 @@ public:
     QUndoStack* undoStack() const { return m_undo; }
     bool overlaysHidden = false;  // true while rendering exports, thumbnails and the minimap
     bool snapEnabled = true;
+    bool dragLayerOn = false;  // the view shows its drag layer image; baked items skip painting
+    QColor canvasColor;  // the view's background; on screen, see-through container fills are blended onto it
     QVector<QLineF> guides;       // smart alignment guides, drawn by the view
     NodeItem* linkTarget = nullptr;  // while a link end is dragged: the node showing its anchors
     int linkAnchor = -1;             // linkTarget's anchor under the cursor (see NodeItem::hitAnchor)
@@ -72,12 +74,18 @@ public:
     void selectAll();
 
     QList<ChartItem*> selectedChartItems() const;
+    // selectedItems().size() without building the list; nodes ask on every paint and mouse move.
+    int selectionSize() const { return m_selectionSize; }
     NodeItem* nodeById(int id) const;
     NodeItem* nodeAt(QPointF scenePos, const NodeItem* exclude = nullptr) const;  // hit by shape body
     QList<NodeItem*> contents(const NodeItem* container) const;  // shapes whose center is inside it
     bool isEditingText() const;
     double viewScale() const;
     QPointF snap(QPointF p, Qt::KeyboardModifiers mods = {}) const;
+
+    // While shapes are dragged or resized: those shapes and their links (what changes each frame).
+    // Empty otherwise, including while a new link is dragged out.
+    QList<ChartItem*> dragMovingItems() const;
 
     // Used by NodeItem during mouse interaction
     QPointF adjustDrag(NodeItem* n, QPointF pos);
@@ -97,6 +105,7 @@ private:
     QUndoStack* m_undo;
     QHash<int, ChartItem*> m_items;
     int m_nextId = 1;
+    int m_selectionSize = 0;
     QList<int> m_pressIds;
     States m_pressState;
     QHash<NodeItem*, QList<NodeItem*>> m_riders;  // during a drag: container -> shapes it carries

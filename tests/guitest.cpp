@@ -30,6 +30,7 @@ int main(int argc, char** argv) {
     auto at = [&](QPointF s) { return view.mapFromScene(s); };
 
     auto* a = scene.addNode(FlowShape::Process, {0, 0});  // 140x70, right port at (70, 0)
+    const int aId = a->id;
     scene.clearSelection();
 
     // Hover, then click the right quick-connect arrow: adds a connected copy to the right.
@@ -121,6 +122,7 @@ int main(int argc, char** argv) {
     CHECK(scene.itemCount() == 1);
     scene.undoStack()->undo();
     CHECK(scene.itemCount() == 4);
+    a = scene.nodeById(aId);  // undo re-created the shape; the old pointer is gone
 
     // Reconnect: select a link, drag its target end handle onto another shape.
     {

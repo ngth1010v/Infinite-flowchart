@@ -283,10 +283,11 @@ Port portFromKey(const QString& key) {
     return Port::Bottom;
 }
 
-QPointF shapePort(FlowShape s, const QRectF& r, Port p) {
+QPointF shapePort(FlowShape s, const QRectF& r, Port p) { return shapePort(shapeOutline(s, r), r, p); }
+
+QPointF shapePort(const QPainterPath& path, const QRectF& r, Port p) {
     const QPointF c = r.center(), d = portDir(p);
     const QPointF mid = c + QPointF(d.x() * r.width() / 2, d.y() * r.height() / 2);
-    const QPainterPath path = shapeOutline(s, r);
     if (!path.contains(c + d)) return mid;  // degenerate (tiny) shape
     // Binary search along the ray from the center for the outline crossing.
     double lo = 0, hi = std::max(r.width(), r.height());

@@ -104,7 +104,8 @@ void NodeItem::refresh() {
     m_bounds = r.adjusted(-kMargin, -kMargin, kMargin, kMargin);
     m_outline = shapeOutline(shapeType, r);
     m_deco = shapeDecoration(shapeType, r);
-    for (int i = 0; i < 4; ++i) m_ports[i] = shapePort(shapeType, r, Port(i));
+    for (int i = 0; i < 4; ++i) m_ports[i] = shapePort(m_outline, r, Port(i));  // reuse: building the outline is the costly part
+    m_shapeCacheKey = -1;
     // Containers sit under links (-1) and shapes (0); bigger ones lower, so nested ones stay visible.
     setZValue(isContainer(shapeType) ? -2 - size.width() * size.height() * 1e-9 : 0);
     update();
@@ -210,7 +211,7 @@ void ChartItem::cancelEdit() {
 
 bool NodeItem::showHandles() const {
     const auto* c = chart();
-    return isSelected() && c && !c->overlaysHidden && !m_editor && c->selectedItems().size() == 1;
+    return isSelected() && c && !c->overlaysHidden && !m_editor && c->selectionSize() == 1;
 }
 
 bool NodeItem::showArrows() const {
@@ -253,23 +254,28 @@ QPainterPath NodeItem::shape() const {
     // Containers are hit only on their border and title band; clicks in the body fall through to
     // the canvas (rubber-band selection) and the shapes inside.
     // Containers are built with real unions: plain addPath under WindingFill would fill the hole.
+    // Hit tests call this on every mouse move, and the container's boolean ops are costly: rebuild
+    // only when what it depends on changes (refresh() resets the key for size and shape changes).
+    const double u = uiUnit();
+    const bool arrows = showArrows(), handles = showHandles();
+    const int key = int(arrows) | int(handles) << 1;
+    if (key == m_shapeCacheKey && u == m_shapeCacheU) return m_shapeCache;
     const bool box = isContainer(shapeType);
-    const double edge = 12 * uiUnit();  // grab band on each side of a container's border
-    const double z = 32 * uiUnit();    // while hovered: out past the quick-connect arrows
+    const double edge = 12 * u;  // grab band on each side of a container's border
+    const double z = 32 * u;    // while hovered: out past the quick-connect arrows
     QPainterPath p;
     if (box) {
         QPainterPath outer, body, header;
-        outer.addRect(rect().adjusted(-(showArrows() ? z : edge), -(showArrows() ? z : edge),
-                                      showArrows() ? z : edge, showArrows() ? z : edge));
+        outer.addRect(rect().adjusted(-(arrows ? z : edge), -(arrows ? z : edge), arrows ? z : edge, arrows ? z : edge));
         body.addRect(rect().adjusted(edge, edge, -edge, -edge));
         header.addRect(textRect());
         p = outer.subtracted(body).united(header);
     } else {
         p = m_outline;
         p.setFillRule(Qt::WindingFill);
-        if (showArrows()) p.addRect(rect().adjusted(-z, -z, z, z));  // keep the arrows reachable
+        if (arrows) p.addRect(rect().adjusted(-z, -z, z, z));  // keep the arrows reachable
     }
-    if (showHandles()) {
+    if (handles) {
         QPainterPath grips;
         for (int i = 0; i < kHandles; ++i) grips.addRect(handleHitRect(i));
         // A container's path comes from boolean ops (odd-even fill): an added handle overlapping
@@ -277,21 +283,40 @@ QPainterPath NodeItem::shape() const {
         if (box) p = p.united(grips);
         else p.addPath(grips);
     }
+    m_shapeCache = p, m_shapeCacheKey = key, m_shapeCacheU = u;
     return p;
 }
 
+bool ChartItem::skipPaint() const {
+    const auto* c = chart();
+    return baked && c && c->dragLayerOn && !c->overlaysHidden;  // exports and the minimap draw everything
+}
+
 void NodeItem::paint(QPainter* p, const QStyleOptionGraphicsItem* opt, QWidget*) {
+    if (skipPaint()) return;  // already in the drag layer image
     const double lod = opt->levelOfDetailFromTransform(p->worldTransform());
     const QPen pen = style.dash == Qt::NoPen || style.strokeWidth <= 0
                          ? QPen(Qt::NoPen)
                          : QPen(style.stroke, style.strokeWidth, style.dash, Qt::FlatCap, Qt::MiterJoin);
-    p->setBrush(style.fill);
+    auto over = [](const QColor& top, const QColor& under) {  // `top` blended onto opaque `under`
+        const double a = top.alphaF();
+        return QColor::fromRgbF(top.redF() * a + under.redF() * (1 - a), top.greenF() * a + under.greenF() * (1 - a),
+                                top.blueF() * a + under.blueF() * (1 - a));
+    };
+    // On screen, a see-through container fill is drawn as its color over the canvas, solid: filling
+    // big translucent areas costs about 3x more. Exports and the minimap keep the real fill.
+    const auto* cs = chart();
+    QColor fill = style.fill;
+    if (isContainer(shapeType) && fill.alpha() > 0 && fill.alpha() < 255 && cs && !cs->overlaysHidden &&
+        cs->canvasColor.isValid())
+        fill = over(fill, cs->canvasColor);
+    p->setBrush(fill);
     p->setPen(pen);
     p->drawPath(m_outline);
     if (isContainer(shapeType)) {
         QColor band = style.stroke;
         band.setAlpha(28);
-        p->fillRect(textRect(), band);
+        p->fillRect(textRect(), fill.alpha() == 255 ? over(band, fill) : band);
     }
     if (!m_deco.isEmpty()) {
         p->setBrush(Qt::NoBrush);
@@ -301,17 +326,15 @@ void NodeItem::paint(QPainter* p, const QStyleOptionGraphicsItem* opt, QWidget*)
     // Skip text once it would be under ~4px tall: unreadable and the main cost when zoomed out.
     if (!m_editor && !text.isEmpty() && lod * style.fontSize >= 4) {
         p->setPen(style.text);
-        p->setFont(styleFont(style));
         const QRectF tr = textRect();
-        const int flags = int(style.align) | Qt::AlignVCenter | Qt::TextWordWrap;
         if (shapeType == FlowShape::HContainer) {  // title reads bottom-to-top in the left band
             p->save();
             p->translate(tr.center());
             p->rotate(-90);
-            p->drawText(QRectF(-tr.height() / 2 + 8, -tr.width() / 2, tr.height() - 16, tr.width()), flags, text);
+            drawTextIn(p, QRectF(-tr.height() / 2 + 8, -tr.width() / 2, tr.height() - 16, tr.width()));
             p->restore();
         } else {
-            p->drawText(tr.adjusted(8, 4, -8, -4), flags, text);
+            drawTextIn(p, tr.adjusted(8, 4, -8, -4));
         }
     }
 
@@ -348,6 +371,25 @@ void NodeItem::paint(QPainter* p, const QStyleOptionGraphicsItem* opt, QWidget*)
             p->drawPolygon(QPolygonF{a + d * 5 * u, a - d * 4 * u + n * 5 * u, a - d * 4 * u - n * 5 * u});
         }
     }
+}
+
+// `text` wrapped to box's width, centered vertically in it: what drawText(box, align | AlignVCenter
+// | TextWordWrap) draws. The layout is kept until the text, font, width or alignment changes;
+// laying the text out again on every paint was a large part of each frame.
+void NodeItem::drawTextIn(QPainter* p, const QRectF& box) {
+    const QFont f = styleFont(style);
+    if (m_layoutText != text || m_layoutFont != f || m_layoutWidth != box.width() || m_layoutAlign != style.align) {
+        m_textLayout = QStaticText(QString(text).replace(u'\n', QChar::LineSeparator));  // it ignores plain '\n'
+        m_textLayout.setTextFormat(Qt::PlainText);
+        m_textLayout.setTextWidth(box.width());
+        QTextOption o(style.align);
+        o.setWrapMode(QTextOption::WordWrap);
+        m_textLayout.setTextOption(o);
+        m_textLayout.prepare(QTransform(), f);
+        m_layoutText = text, m_layoutFont = f, m_layoutWidth = box.width(), m_layoutAlign = style.align;
+    }
+    p->setFont(f);
+    p->drawStaticText(QPointF(box.left(), box.top() + (box.height() - m_textLayout.size().height()) / 2), m_textLayout);
 }
 
 QVariant NodeItem::itemChange(GraphicsItemChange change, const QVariant& value) {
@@ -810,6 +852,7 @@ void LinkItem::mouseReleaseEvent(QGraphicsSceneMouseEvent* e) {
 }
 
 void LinkItem::paint(QPainter* p, const QStyleOptionGraphicsItem* opt, QWidget*) {
+    if (skipPaint()) return;  // already in the drag layer image
     const int n = int(m_pts.size());
     if (n < 2) return;
     const auto* c = chart();

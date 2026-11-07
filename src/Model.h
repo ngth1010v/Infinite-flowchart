@@ -25,6 +25,7 @@ QSizeF shapeDefaultSize(FlowShape s);
 QPainterPath shapeOutline(FlowShape s, const QRectF& r);     // closed: filled, stroked, hit-tested
 QPainterPath shapeDecoration(FlowShape s, const QRectF& r);  // extra inner lines, stroked only
 QPointF shapePort(FlowShape s, const QRectF& r, Port p);     // where a link attaches, on the outline
+QPointF shapePort(const QPainterPath& outline, const QRectF& r, Port p);  // same, with the outline already built
 QRectF shapeTextRect(FlowShape s, const QRectF& r);          // area inside the outline that text may use
 
 // Containers (swimlanes) hold the shapes whose center lies inside them.
