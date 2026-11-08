@@ -53,3 +53,7 @@ then copy the MinGW DLLs it depends on (`ldd dist/Flowchart.exe`) into `dist/`.
 | `src/ChartView.*` | Zoom/pan, adaptive grid, minimap, shape drop |
 | `src/Panels.*` | Left shape palette, right style panel |
 | `src/HomeScreen.*`, `src/MainWindow.*` | Home screen, menus, open/save, autosave, theme |
+
+## Credits
+
+App icon: Arrow infinity Icon by IcoLabs on <a href="https://icon-icons.com/authors/1038-icolabs">Icon-Icons.com</a>

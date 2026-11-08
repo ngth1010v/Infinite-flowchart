@@ -18,7 +18,11 @@ add_library(flowcore STATIC
 target_include_directories(flowcore PUBLIC src)
 target_link_libraries(flowcore PUBLIC Qt6::Widgets Qt6::Svg)
 
-add_executable(Flowchart WIN32 src/main.cpp)
+# Windows exe icon. Qt also uses IDI_ICON1 as the default window icon.
+# Generated so the .ico path is absolute (windres resolves it from the build dir).
+file(WRITE ${CMAKE_BINARY_DIR}/app.rc "IDI_ICON1 ICON \"${CMAKE_SOURCE_DIR}/res/app.ico\"\n")
+set_source_files_properties(${CMAKE_BINARY_DIR}/app.rc PROPERTIES OBJECT_DEPENDS ${CMAKE_SOURCE_DIR}/res/app.ico)
+add_executable(Flowchart WIN32 src/main.cpp ${CMAKE_BINARY_DIR}/app.rc)
 target_link_libraries(Flowchart PRIVATE flowcore)
 
 add_executable(selftest tests/selftest.cpp)
