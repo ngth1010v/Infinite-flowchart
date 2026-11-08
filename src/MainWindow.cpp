@@ -12,6 +12,7 @@
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QHBoxLayout>
+#include <QInputDialog>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QLabel>
@@ -135,7 +136,7 @@ MainWindow::MainWindow() {
     connect(m_view, &ChartView::zoomChanged, this,
             [this](double z) { m_zoomLabel->setText(QStringLiteral("%1%").arg(qRound(z * 100))); });
 
-    m_autosave.setInterval(30'000);
+    m_autosave.setInterval(QSettings().value("autosaveMinutes", 1).toInt() * 60'000);
     connect(&m_autosave, &QTimer::timeout, this, &MainWindow::autosave);
     m_autosave.start();
 
@@ -165,6 +166,14 @@ void MainWindow::buildMenus() {
     makeAction(file, tr("&Export as PNG / SVG / PDF…"), {QKeySequence(Qt::CTRL | Qt::Key_E)}, [this] { exportChart(); });
     makeAction(file, tr("Export for &LLM (text)…"), {QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_E)},
                [this] { exportChart(true); });
+    makeAction(file, tr("A&uto-save interval…"), {}, [this] {
+        bool ok = false;
+        const int min = QInputDialog::getInt(this, tr("Auto-save"), tr("Save every (minutes):"),
+                                             m_autosave.interval() / 60'000, 1, 120, 1, &ok);
+        if (!ok) return;
+        QSettings().setValue("autosaveMinutes", min);
+        m_autosave.start(min * 60'000);
+    }, false);
     file->addSeparator();
     makeAction(file, tr("&Close chart (go home)"), {QKeySequence(Qt::CTRL | Qt::Key_W)}, [this] { goHome(); });
     makeAction(file, tr("E&xit"), {QKeySequence(Qt::ALT | Qt::Key_F4)}, [this] { close(); }, false);
@@ -474,6 +483,8 @@ void MainWindow::removeAutosave() { QFile::remove(autosavePath()); }
 
 void MainWindow::autosave() {
     if (!onChart() || m_scene->undoStack()->isClean()) return;
+    if (!m_path.isEmpty() && writeFile(m_path)) return;  // saved chart: write the file itself
+    // Untitled (or the write failed): keep a recovery copy instead.
     QJsonObject o = m_scene->toJson();
     o["view"] = m_view->viewState();
     o["origPath"] = m_path;

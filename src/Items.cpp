@@ -455,7 +455,11 @@ void NodeItem::mouseMoveEvent(QGraphicsSceneMouseEvent* e) {
         if (m_lockX) m.setX(m_movingCorner.x());
         if (m_lockY) m.setY(m_movingCorner.y());
         auto atLeast = [](double d) { return std::abs(d) < kMinSize ? (d < 0 ? -kMinSize : kMinSize) : d; };
-        const QPointF d(atLeast(m.x() - m_fixedCorner.x()), atLeast(m.y() - m_fixedCorner.y()));
+        QPointF d(atLeast(m.x() - m_fixedCorner.x()), atLeast(m.y() - m_fixedCorner.y()));
+        if (e->modifiers() & Qt::ShiftModifier) {  // Shift: square. An edge handle sets the side; a corner uses the longer one.
+            const double side = m_lockX ? std::abs(d.y()) : m_lockY ? std::abs(d.x()) : std::max(std::abs(d.x()), std::abs(d.y()));
+            d = {std::copysign(side, d.x()), std::copysign(side, d.y())};
+        }
         const QRectF nr = QRectF(m_fixedCorner, m_fixedCorner + d).normalized();
         size = nr.size();
         setPos(nr.center());
