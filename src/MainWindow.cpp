@@ -6,7 +6,6 @@
 #include <QApplication>
 #include <QBuffer>
 #include <QClipboard>
-#include <QDialog>
 #include <QCloseEvent>
 #include <QDir>
 #include <QFileDialog>
@@ -24,6 +23,7 @@
 #include <QSaveFile>
 #include <QScrollArea>
 #include <QSettings>
+#include <QShortcut>
 #include <QStackedWidget>
 #include <QStandardPaths>
 #include <QStatusBar>
@@ -254,6 +254,10 @@ void MainWindow::buildMenus() {
 }
 
 void MainWindow::showShortcuts() {
+    if (m_shortcutsPanel) {  // F1 again closes it
+        m_shortcutsPanel->close();
+        return;
+    }
     // Menu shortcuts are read from the menus, so they never go stale; canvas keys live in ChartView.
     auto group = [](const QString& title, const QList<std::pair<QString, QString>>& rows) {
         QString h = QStringLiteral("<h3>%1</h3><table cellspacing=0 cellpadding=4>").arg(title.toHtmlEscaped());
@@ -294,14 +298,19 @@ void MainWindow::showShortcuts() {
     }
     html += QStringLiteral("</tr></table>");
 
-    QDialog dlg(this, Qt::FramelessWindowHint);
-    dlg.setGeometry(geometry());  // covers the whole window; Esc or Close dismisses it
-    auto* v = new QVBoxLayout(&dlg);
+    // An overlay inside the window, not a modal dialog: a modal one blocked the window's own close button.
+    auto* dlg = new QWidget(this);
+    m_shortcutsPanel = dlg;
+    dlg->setAttribute(Qt::WA_DeleteOnClose);
+    dlg->setAutoFillBackground(true);
+    dlg->setGeometry(rect());  // covers the whole window; Esc, F1 or Close dismisses it
+    new QShortcut(QKeySequence(Qt::Key_Escape), dlg, dlg, &QWidget::close, Qt::WidgetWithChildrenShortcut);
+    auto* v = new QVBoxLayout(dlg);
     auto* top = new QHBoxLayout;
     auto* title = new QLabel(QStringLiteral("<h2>%1</h2>").arg(tr("Keyboard shortcuts")));
     auto* close = new QToolButton;
     close->setText(tr("Close (Esc)"));
-    connect(close, &QToolButton::clicked, &dlg, &QDialog::accept);
+    connect(close, &QToolButton::clicked, dlg, &QWidget::close);
     top->addWidget(title, 1);
     top->addWidget(close);
     v->addLayout(top);
@@ -312,7 +321,13 @@ void MainWindow::showShortcuts() {
     scroll->setWidgetResizable(true);
     scroll->setFrameShape(QFrame::NoFrame);
     v->addWidget(scroll, 1);
-    dlg.exec();
+    dlg->show();
+    close->setFocus();  // so Esc reaches the overlay
+}
+
+void MainWindow::resizeEvent(QResizeEvent* e) {
+    QMainWindow::resizeEvent(e);
+    if (m_shortcutsPanel) m_shortcutsPanel->setGeometry(rect());
 }
 
 // ---------------------------------------------------------------- screens

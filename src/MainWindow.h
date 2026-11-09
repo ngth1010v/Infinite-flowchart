@@ -1,5 +1,6 @@
 #pragma once
 #include <QMainWindow>
+#include <QPointer>
 #include <QTimer>
 #include <QVariantAnimation>
 #include <functional>
@@ -23,6 +24,7 @@ public:
 
 protected:
     void closeEvent(QCloseEvent* e) override;
+    void resizeEvent(QResizeEvent* e) override;
 
 private:
     ChartScene* m_scene;
@@ -36,6 +38,7 @@ private:
     QWidget* m_paletteBox;
     QToolButton* m_paletteToggle;
     QToolButton* m_shortcutsButton;
+    QPointer<QWidget> m_shortcutsPanel;  // open shortcut list, if any
     QVariantAnimation m_leftAnim, m_rightAnim;  // slide the side panels open/closed
     QToolButton* m_panelToggle;
     QAction* m_panelAction;

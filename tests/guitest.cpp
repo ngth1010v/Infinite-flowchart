@@ -2,6 +2,7 @@
 // resize, inline text edit, snapped move, undo, zoom. Run: guitest.exe (exit code 0 = pass).
 #include "ChartScene.h"
 #include "ChartView.h"
+#include "MainWindow.h"
 #include <QApplication>
 #include <QTest>
 #include <QJsonArray>
@@ -316,6 +317,19 @@ int main(int argc, char** argv) {
         QTest::mouseRelease(vp, Qt::RightButton, {}, c0 + QPoint(120, 40));
         const QPointF moved = view.mapToScene(vp->rect().center());
         CHECK(std::abs((start - moved).x() * view.zoom() - 120) < 2);
+    }
+
+    // F1 opens the shortcut list inside the window; the window can still close while it is open.
+    {
+        MainWindow w;
+        w.show();
+        CHECK(QTest::qWaitForWindowExposed(&w));
+        QTest::keyClick(&w, Qt::Key_F1);
+        QWidget* panel = nullptr;
+        for (auto* c : w.findChildren<QWidget*>(Qt::FindDirectChildrenOnly))
+            if (c->isVisible() && c->geometry() == w.rect()) panel = c;
+        CHECK(panel);
+        CHECK(w.close());
     }
 
     std::printf("OK  gui interactions\n");
