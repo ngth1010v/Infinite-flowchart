@@ -31,7 +31,7 @@ int main(int argc, char** argv) {
     qputenv("QT_QPA_PLATFORM", "offscreen");
     QApplication app(argc, argv);
 
-    // Ctrl+F: a container wraps its contents plus padding and the title band; undo, save/load.
+    // Ctrl+Shift+F: a container wraps its contents plus padding and the title band; undo, save/load.
     {
         ChartScene sc;
         auto* box = sc.addNode(FlowShape::VContainer, {0, 0});
@@ -63,7 +63,7 @@ int main(int argc, char** argv) {
         CHECK(box->toJson()["padding"].toDouble() == 15);  // padding survives undo's reload
     }
 
-    // Ctrl+M: fan-out links from one port get one shared horizontal run; undo restores them.
+    // Ctrl+L: fan-out links from one port get one shared horizontal run; undo restores them.
     {
         ChartScene sc;
         auto* src = sc.addNode(FlowShape::Process, {0, 0});
@@ -77,7 +77,7 @@ int main(int argc, char** argv) {
         const QPolygonF oldA = a->points(), oldB = b->points();
         CHECK(oldA.size() == 4 && oldB.size() == 4 && oldA[1].y() != oldB[1].y());
         sc.clearSelection();
-        CHECK(!sc.bundleSelectedLinks());  // nothing selected: minimap toggles instead
+        CHECK(!sc.bundleSelectedLinks());  // nothing selected
         a->setSelected(true);
         CHECK(!sc.bundleSelectedLinks());  // one link only
         b->setSelected(true);
@@ -123,7 +123,7 @@ int main(int argc, char** argv) {
         CHECK(box->pos() == boxPos);
     }
 
-    // Ctrl+R fits shapes to their text (containers left alone); 2+ shapes then share the largest size.
+    // Ctrl+Shift+F fits shapes to their text (containers left alone); 2+ shapes then share the largest size.
     {
         ChartScene sc;
         auto* a = sc.addNode(FlowShape::Process, {0, 0});

@@ -227,14 +227,14 @@ StylePanel::StylePanel(ChartScene* scene, QWidget* parent) : QWidget(parent), m_
         });
     });
 
-    // Container-only: padding kept around the contents by Ctrl+F (fit to contents)
+    // Container-only: padding kept around the contents by Ctrl+Shift+F (fit to content)
     m_containerBox = new QWidget;
     auto* cf = form(m_containerBox);
     m_padding = new QSpinBox;
     m_padding->setRange(-1, 2000);  // -1 = blank "mixed"
     m_padding->setSpecialValueText(" ");
     m_padding->setSuffix(" px");
-    m_padding->setToolTip(tr("Space around the contents when fitting the container (Ctrl+F)"));
+    m_padding->setToolTip(tr("Space around the contents when fitting the container (Ctrl+Shift+F)"));
     cf->addRow(tr("Padding"), m_padding);
     lay->addWidget(m_containerBox);
     connect(m_padding, &QSpinBox::valueChanged, this, [this](int v) {

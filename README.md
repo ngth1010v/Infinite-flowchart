@@ -20,12 +20,12 @@ Open a chart directly: `Flowchart.exe path\to\chart.flowx`. Example: `samples\sq
 | Edit text | Double-click a shape (Enter = done, Shift+Enter = new line, Esc = cancel); double-click a link for its label |
 | Resize | Select one shape, drag a corner handle |
 | Style | Right panel opens when something is selected; with several selected, edits apply to all |
-| Zoom | Mouse wheel (around the cursor), Ctrl+= / Ctrl+-, Ctrl+0 = 100%, Ctrl+R = fit whole chart when no shape is selected (2%–5000%) |
+| Zoom | Mouse wheel (around the cursor), Ctrl+= / Ctrl+-, Ctrl+0 = 100%, Ctrl+1 = fit whole chart (2%–5000%) |
 | Pan | Right-drag, middle-drag, Space+drag, Shift+wheel (sideways) |
 | Snap | Grid + alignment guides while dragging; hold Alt to place freely; toggle in View menu |
-| Edit | Ctrl+Z / Ctrl+Y, Ctrl+C / X / V, Ctrl+D duplicate, Delete, Ctrl+A, Ctrl+F fit selected container to its contents (padding set in the style panel), Ctrl+M with only 2+ links selected: bundle them (middle segments moved onto shared lines, as little as possible), Ctrl+Arrow align selected shapes' left/right/top/bottom edges (containers and links untouched), Ctrl+Shift+Arrow align and space them evenly, Ctrl+R fit selected shapes to their text (2+ shapes: then all get the largest width and height; containers and links untouched) |
+| Edit | Ctrl+Z / Ctrl+Y, Ctrl+C / X / V, Ctrl+D duplicate, Delete, Ctrl+A, Ctrl+Shift+F fit to content (selected shapes fit their text, 2+ shapes then all get the largest width and height; selected containers fit their contents, padding set in the style panel), Ctrl+L with only 2+ links selected: bundle them (middle segments moved onto shared lines, as little as possible), Ctrl+Arrow align selected shapes' left/right/top/bottom edges (containers and links untouched), Ctrl+Shift+Arrow align and space them evenly |
 | File | Ctrl+N, Ctrl+O, Ctrl+S, Ctrl+Shift+S, Ctrl+E export PNG/SVG/PDF, Ctrl+Shift+E export for LLM (.md/.txt outline: container nesting + links, no positions), Ctrl+W back to home |
-| View | F1 or the ⌨ Shortcuts button (bottom of the shape panel) lists every shortcut, Ctrl+B shape panel icons-only, Ctrl+M minimap (when not bundling links), View > Dark theme |
+| View | F1 or the ⌨ Shortcuts button (bottom of the shape panel) lists every shortcut, Ctrl+B shape panel icons-only, Ctrl+M minimap, View > Dark theme |
 
 Unsaved work is autosaved every 30 s to `%APPDATA%\Flowchart\Flowchart\autosave.flowx`
 and offered for recovery after a crash.

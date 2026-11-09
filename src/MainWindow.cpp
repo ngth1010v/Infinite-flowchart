@@ -116,7 +116,7 @@ MainWindow::MainWindow() {
     setCentralWidget(m_stack);
 
     m_zoomLabel = new QLabel;
-    statusBar()->addWidget(new QLabel(tr("Wheel: zoom   ·   Right-drag / Space-drag / Shift+wheel: pan   ·   Ctrl+R: fit   ·   "
+    statusBar()->addWidget(new QLabel(tr("Wheel: zoom   ·   Right-drag / Space-drag / Shift+wheel: pan   ·   Ctrl+1: fit chart   ·   "
                                          "Alt while dragging: no snap   ·   Hover a shape and drag an arrow to connect")));
     statusBar()->addPermanentWidget(m_zoomLabel);
 
@@ -198,8 +198,11 @@ void MainWindow::buildMenus() {
                [this] { m_scene->deleteSelected(); });
     edit->addSeparator();
     makeAction(edit, tr("Select &all"), {QKeySequence::SelectAll}, [this] { m_scene->selectAll(); });
-    makeAction(edit, tr("&Fit container to contents"), {QKeySequence(Qt::CTRL | Qt::Key_F)},
-               [this] { m_scene->fitSelectedContainers(); });
+    // Shapes first, so a selected container then wraps them at their fitted size.
+    makeAction(edit, tr("&Fit to content"), {QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_F)}, [this] {
+        m_scene->fitSelectedShapes();
+        m_scene->fitSelectedContainers();
+    });
     makeAction(edit, tr("&Reset link path"), {}, [this] {
         m_scene->editSelected(QString(), [](ChartItem* c) {
             if (auto* l = qgraphicsitem_cast<LinkItem*>(c)) l->path.clear();
@@ -207,10 +210,7 @@ void MainWindow::buildMenus() {
     });
 
     auto* view = menuBar()->addMenu(tr("&View"));
-    // Ctrl+R fits the selected shapes to their text; with no shape selected it fits the whole chart in view.
-    makeAction(view, tr("&Fit selected shapes to text / fit whole chart"), {QKeySequence(Qt::CTRL | Qt::Key_R)}, [this] {
-        if (!m_scene->fitSelectedShapes()) m_view->fitAll();
-    });
+    makeAction(view, tr("&Fit whole chart"), {QKeySequence(Qt::CTRL | Qt::Key_1)}, [this] { m_view->fitAll(); });
     makeAction(view, tr("Actual size (100%)"), {QKeySequence(Qt::CTRL | Qt::Key_0)}, [this] { m_view->resetZoom(); });
     makeAction(view, tr("Zoom &in"), {QKeySequence(Qt::CTRL | Qt::Key_Equal), QKeySequence(Qt::CTRL | Qt::Key_Plus)},
                [this] { m_view->zoomBy(1.25, false); });
@@ -232,11 +232,8 @@ void MainWindow::buildMenus() {
         m_view->setMinimapVisible(on);
         QSettings().setValue("minimap", on);
     });
-    // Ctrl+M bundles the selected links when only 2+ links are selected; otherwise it toggles the minimap.
-    makeAction(edit, tr("&Bundle selected links / toggle minimap"), {QKeySequence(Qt::CTRL | Qt::Key_M)},
-               [this, minimap] {
-                   if (!m_scene->bundleSelectedLinks()) minimap->toggle();
-               });
+    minimap->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_M));
+    makeAction(edit, tr("&Bundle selected links"), {QKeySequence(Qt::CTRL | Qt::Key_L)}, [this] { m_scene->bundleSelectedLinks(); });
     makeAction(view, tr("Shape panel: icons only"), {QKeySequence(Qt::CTRL | Qt::Key_B)},
                [this] { setPaletteCollapsed(!m_paletteCollapsed); });
     // Style panel starts closed every launch and opens only on request, not on selection.
