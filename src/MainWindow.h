@@ -12,6 +12,7 @@ class QLabel;
 class QScrollArea;
 class QStackedWidget;
 class QToolButton;
+class FindPanel;
 class ShapePalette;
 class StylePanel;
 
@@ -34,6 +35,7 @@ private:
     QWidget* m_chartPage;
     ShapePalette* m_palette;
     StylePanel* m_panel;
+    FindPanel* m_find;
     QScrollArea* m_panelScroll;
     QWidget* m_paletteBox;
     QToolButton* m_paletteToggle;

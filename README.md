@@ -24,6 +24,7 @@ Open a chart directly: `Flowchart.exe path\to\chart.flowx`. Example: `samples\sq
 | Pan | Right-drag, middle-drag, Space+drag, Shift+wheel (sideways) |
 | Snap | Grid + alignment guides while dragging; hold Alt to place freely; toggle in View menu |
 | Edit | Ctrl+Z / Ctrl+Y, Ctrl+C / X / V, Ctrl+D duplicate, Delete, Ctrl+A, Ctrl+Shift+F fit to content (selected shapes fit their text, 2+ shapes then all get the largest width and height; selected containers fit their contents, padding set in the style panel), Ctrl+L with only 2+ links selected: bundle them (middle segments moved onto shared lines, as little as possible), Ctrl+Arrow align selected shapes' left/right/top/bottom edges (containers and links untouched), Ctrl+Shift+Arrow align and space them evenly |
+| Find | Ctrl+F opens a small find & replace window (drag it anywhere). Matches highlight on the canvas as you type; Aa (Alt+C) toggles match case. The current match is orange and centered on screen. Enter / Shift+Enter or ↑ ↓: next / previous. Replace: changes the current shape or link label and moves on; Replace all: every match, one undo step. Esc closes |
 | File | Ctrl+N, Ctrl+O, Ctrl+S, Ctrl+Shift+S, Ctrl+E export PNG/SVG/PDF, Ctrl+Shift+E export for LLM (.md/.txt outline: container nesting + links, no positions), Ctrl+W back to home |
 | View | F1 or the ⌨ Shortcuts button (bottom of the shape panel) lists every shortcut, Ctrl+B shape panel icons-only, Ctrl+M minimap, View > Dark theme |
 

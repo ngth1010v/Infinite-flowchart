@@ -387,6 +387,29 @@ void ChartScene::setItemText(ChartItem* item, const QString& text) {
     push(tr("Edit text"), before, capture({item->id}));
 }
 
+QList<ChartItem*> ChartScene::findMatches() const {
+    QList<ChartItem*> r;
+    if (findText.isEmpty()) return r;
+    for (auto* c : m_items)
+        if (c->text.contains(findText, findCase)) r << c;
+    std::sort(r.begin(), r.end(), [](ChartItem* a, ChartItem* b) {
+        const QPointF pa = a->sceneBoundingRect().center(), pb = b->sceneBoundingRect().center();
+        return pa.y() != pb.y() ? pa.y() < pb.y() : pa.x() < pb.x();
+    });
+    return r;
+}
+
+int ChartScene::replaceText(const QList<ChartItem*>& items, const QString& with) {
+    QList<std::pair<ChartItem*, QString>> edits;
+    for (auto* c : items)
+        if (QString t = QString(c->text).replace(findText, with, findCase); t != c->text) edits.append({c, t});
+    if (edits.isEmpty()) return 0;  // no empty undo step
+    m_undo->beginMacro(tr("Replace"));
+    for (const auto& [c, t] : edits) setItemText(c, t);
+    m_undo->endMacro();
+    return int(edits.size());
+}
+
 void ChartScene::reconnectLink(LinkItem* link, bool sourceEnd, NodeItem* node, Port port, bool autoPort) {
     const States before = capture({link->id});
     link->path.clear();  // a new end: back to the automatic route

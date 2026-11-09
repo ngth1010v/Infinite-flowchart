@@ -1,6 +1,7 @@
 #pragma once
 #include "Model.h"
 #include <QListWidget>
+#include <QPointer>
 #include <functional>
 #include <optional>
 
@@ -60,4 +61,29 @@ private:
     QToolButton* colorButton(const QString& key, QColor Style::*field);
     QCheckBox* checkBox(const QString& text, const QString& key, bool Style::*field);
     static void showColor(QToolButton* b, const std::optional<QColor>& c);
+};
+
+class ChartView;
+class QLineEdit;
+
+// Find & replace (Ctrl+F): a small floating window the user can move off the shapes they look at.
+// Matches highlight on the canvas while typing. Enter / Shift+Enter: next / previous. Esc: close.
+class FindPanel : public QWidget {
+    Q_OBJECT
+public:
+    FindPanel(ChartView* view, QWidget* parent);
+    void open();  // show (first time: top-right of the canvas) and focus the search box
+    void refresh();  // recount matches after the chart changed
+
+protected:
+    void hideEvent(QHideEvent* e) override;
+
+private:
+    QPointer<ChartView> m_view;
+    QLineEdit *m_find, *m_replace;
+    QLabel* m_count;
+    QToolButton* m_case;
+    bool m_placed = false;
+    void step(int dir);  // +1 next, -1 previous, 0 stay on the current match if it still matches
+    void replace(bool all);
 };

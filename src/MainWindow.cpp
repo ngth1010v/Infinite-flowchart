@@ -69,6 +69,7 @@ MainWindow::MainWindow() {
     pl->addWidget(m_shortcutsButton);
 
     m_panel = new StylePanel(m_scene);
+    m_find = new FindPanel(m_view, this);
     m_panelScroll = new QScrollArea;
     m_panelScroll->setWidget(m_panel);
     m_panelScroll->setWidgetResizable(true);
@@ -197,6 +198,7 @@ void MainWindow::buildMenus() {
     makeAction(edit, tr("De&lete"), {QKeySequence::Delete, QKeySequence(Qt::Key_Backspace)},
                [this] { m_scene->deleteSelected(); });
     edit->addSeparator();
+    makeAction(edit, tr("&Find && replace"), {QKeySequence::Find}, [this] { m_find->open(); });
     makeAction(edit, tr("Select &all"), {QKeySequence::SelectAll}, [this] { m_scene->selectAll(); });
     // Shapes first, so a selected container then wraps them at their fitted size.
     makeAction(edit, tr("&Fit to content"), {QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_F)}, [this] {
@@ -335,6 +337,7 @@ void MainWindow::resizeEvent(QResizeEvent* e) {
 bool MainWindow::onChart() const { return m_stack->currentWidget() == m_chartPage; }
 
 void MainWindow::showHome() {
+    m_find->close();
     m_stack->setCurrentWidget(m_home);
     for (auto* a : std::as_const(m_chartActions)) a->setEnabled(false);
     m_rightAnim.stop();

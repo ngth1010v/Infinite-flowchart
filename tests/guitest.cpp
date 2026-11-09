@@ -3,6 +3,10 @@
 #include "ChartScene.h"
 #include "ChartView.h"
 #include "MainWindow.h"
+#include "Panels.h"
+#include <QLineEdit>
+#include <QToolButton>
+#include <QUndoStack>
 #include <QApplication>
 #include <QTest>
 #include <QJsonArray>
@@ -330,6 +334,46 @@ int main(int argc, char** argv) {
             if (c->isVisible() && c->geometry() == w.rect()) panel = c;
         CHECK(panel);
         CHECK(w.close());
+    }
+
+    // Find & replace: matches in reading order; Replace does the current one and moves on; All is one undo step.
+    {
+        ChartScene s;
+        ChartView v(&s);
+        auto* n1 = s.addNode(FlowShape::Process, {0, 0});
+        auto* n2 = s.addNode(FlowShape::Process, {0, 200});
+        auto* n3 = s.addNode(FlowShape::Process, {0, 400});
+        s.setItemText(n1, "Load data");
+        s.setItemText(n2, "other");
+        s.setItemText(n3, "Save DATA, data");
+        FindPanel f(&v, nullptr);
+        f.open();
+        auto edits = f.findChildren<QLineEdit*>();
+        edits[0]->setText("data");
+        CHECK(s.findMatches() == (QList<ChartItem*>{n1, n3}) && s.findCurrent == n1->id);
+        edits[1]->setText("rows");
+        QTest::keyClick(edits[1], Qt::Key_Return);  // replace in n1, go to n3
+        CHECK(n1->text == "Load rows" && s.findCurrent == n3->id);
+        const int before = s.undoStack()->index();
+        CHECK(s.replaceText(s.findMatches(), "x") == 1 && n3->text == "Save x, x");
+        CHECK(s.undoStack()->index() == before + 1);
+        CHECK(s.replaceText(s.findMatches(), "x") == 0 && s.undoStack()->index() == before + 1);
+        // Match case button; the current match is centered in the view.
+        v.resize(800, 600);
+        v.show();
+        CHECK(QTest::qWaitForWindowExposed(&v));
+        s.findCurrent = 0;
+        edits[0]->setText("load");
+        CHECK(s.findMatches().size() == 1);
+        for (auto* b : f.findChildren<QToolButton*>())
+            if (b->text() == "Aa") b->click();
+        CHECK(s.findCase == Qt::CaseSensitive && s.findMatches().isEmpty());
+        edits[0]->setText("Load");
+        CHECK(s.findCurrent == n1->id);
+        const QPointF mid = v.mapToScene(v.viewport()->rect().center());
+        CHECK(std::abs(mid.x() - n1->pos().x()) < 2 && std::abs(mid.y() - n1->pos().y()) < 2);
+        f.close();
+        CHECK(s.findText.isEmpty());
     }
 
     std::printf("OK  gui interactions\n");

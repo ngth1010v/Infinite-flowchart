@@ -1,5 +1,9 @@
 #include "Panels.h"
 #include "ChartScene.h"
+#include "ChartView.h"
+#include <QGridLayout>
+#include <QLineEdit>
+#include <QShortcut>
 #include <QCheckBox>
 #include <QColorDialog>
 #include <QComboBox>
@@ -435,4 +439,131 @@ void StylePanel::refresh() {
     showCheck(m_arrowStart, common(links, [](ChartItem* c) { return c->style.arrowStart; }));
     showCheck(m_arrowEnd, common(links, [](ChartItem* c) { return c->style.arrowEnd; }));
     m_updating = false;
+}
+
+// ---------------------------------------------------------------- FindPanel
+
+FindPanel::FindPanel(ChartView* view, QWidget* parent) : QWidget(parent, Qt::Tool | Qt::CustomizeWindowHint | Qt::WindowTitleHint), m_view(view) {  // title bar to drag by, no close box: the ✕ button closes
+    setWindowTitle(tr("Find & replace"));
+    m_find = new QLineEdit;
+    m_find->setPlaceholderText(tr("Find"));
+    m_find->setClearButtonEnabled(true);
+    m_replace = new QLineEdit;
+    m_replace->setPlaceholderText(tr("Replace with"));
+    m_count = new QLabel;
+    m_count->setMinimumWidth(56);
+    auto button = [this](const QString& text, const QString& tip, auto fn) {
+        auto* b = new QToolButton;
+        b->setText(text);
+        b->setToolTip(tip);
+        b->setAutoRaise(true);
+        connect(b, &QToolButton::clicked, this, fn);
+        return b;
+    };
+    auto* g = new QGridLayout(this);
+    g->setContentsMargins(6, 6, 6, 6);
+    g->setSpacing(4);
+    m_case = button(QStringLiteral("Aa"), tr("Match case (Alt+C)"), [this] {
+        m_view->chart()->findCase = m_case->isChecked() ? Qt::CaseSensitive : Qt::CaseInsensitive;
+        step(0);
+    });
+    m_case->setCheckable(true);
+    m_case->setShortcut(QKeySequence(Qt::ALT | Qt::Key_C));
+    g->addWidget(m_find, 0, 0);
+    g->addWidget(m_case, 0, 1);
+    g->addWidget(m_count, 0, 2);
+    g->addWidget(button(QStringLiteral("↑"), tr("Previous match (Shift+Enter)"), [this] { step(-1); }), 0, 3);
+    g->addWidget(button(QStringLiteral("↓"), tr("Next match (Enter)"), [this] { step(1); }), 0, 4);
+    g->addWidget(button(QStringLiteral("✕"), tr("Close (Esc)"), [this] { close(); }), 0, 5);
+    g->addWidget(m_replace, 1, 0);
+    g->addWidget(button(tr("Replace"), tr("Replace in the current match, then go to the next (Enter in the replace box)"),
+                        [this] { replace(false); }), 1, 1, 1, 2);
+    g->addWidget(button(tr("Replace all"), tr("Replace in every match (Ctrl+Alt+Enter)"), [this] { replace(true); }), 1, 3, 1, 3);
+    setFixedWidth(400);
+
+    connect(m_find, &QLineEdit::textChanged, this, [this] { step(0); });
+    connect(m_find, &QLineEdit::returnPressed, this, [this] {
+        step(QGuiApplication::keyboardModifiers() & Qt::ShiftModifier ? -1 : 1);
+    });
+    connect(m_replace, &QLineEdit::returnPressed, this, [this] { replace(false); });
+    new QShortcut(QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_Return), this, [this] { replace(true); });
+    new QShortcut(QKeySequence(Qt::Key_Escape), this, [this] { close(); });
+    new QShortcut(QKeySequence::Find, this, [this] { open(); });  // Ctrl+F again: back to the search box
+    connect(view->chart()->undoStack(), &QUndoStack::indexChanged, this, [this] {
+        if (isVisible()) refresh();
+    });
+}
+
+void FindPanel::open() {
+    if (!m_placed) {  // top-right corner of the canvas, clear of the minimap
+        m_placed = true;
+        adjustSize();
+        const QPoint tr = m_view->mapToGlobal(m_view->rect().topRight());
+        move(tr.x() - width() - 260, tr.y() + 12);
+    }
+    show();
+    raise();
+    activateWindow();
+    m_find->setFocus();
+    m_find->selectAll();
+    step(0);
+}
+
+void FindPanel::hideEvent(QHideEvent* e) {
+    if (m_view) {  // gone when the app shuts down
+        ChartScene* s = m_view->chart();
+        s->findText.clear();
+        s->findCurrent = 0;
+        s->update();
+    }
+    QWidget::hideEvent(e);
+}
+
+void FindPanel::refresh() {
+    ChartScene* s = m_view->chart();
+    const auto matches = s->findMatches();
+    const int i = int(std::find_if(matches.begin(), matches.end(), [s](ChartItem* c) { return c->id == s->findCurrent; }) -
+                      matches.begin());
+    m_count->setText(s->findText.isEmpty() ? QString()
+                     : matches.isEmpty()   ? tr("No results")
+                                           : tr("%1 of %2").arg(i < matches.size() ? i + 1 : 0).arg(matches.size()));
+    s->update();
+}
+
+void FindPanel::step(int dir) {
+    ChartScene* s = m_view->chart();
+    s->findText = m_find->text();
+    const auto matches = s->findMatches();
+    ChartItem* cur = nullptr;
+    if (!matches.isEmpty()) {
+        const int n = int(matches.size());
+        int i = int(std::find_if(matches.begin(), matches.end(), [s](ChartItem* c) { return c->id == s->findCurrent; }) -
+                    matches.begin());
+        if (i == n) i = dir < 0 ? n - 1 : 0;  // current gone (or none yet): start at an end
+        else i = (i + dir + n) % n;
+        cur = matches[i];
+        m_view->centerOn(cur);  // match in the middle of the screen
+    }
+    s->findCurrent = cur ? cur->id : 0;
+    refresh();
+}
+
+void FindPanel::replace(bool all) {
+    ChartScene* s = m_view->chart();
+    if (s->findText.isEmpty()) return;
+    if (all) {
+        const int n = s->replaceText(s->findMatches(), m_replace->text());
+        refresh();
+        m_count->setText(tr("%n replaced", nullptr, n));
+        return;
+    }
+    const auto matches = s->findMatches();
+    const auto i = std::find_if(matches.begin(), matches.end(), [s](ChartItem* c) { return c->id == s->findCurrent; });
+    if (i == matches.end()) return step(1);  // nothing current yet: first show the user what would change
+    ChartItem* c = *i;
+    const int next = matches.size() > 1 ? (i + 1 == matches.end() ? matches.first() : *(i + 1))->id : 0;
+    s->replaceText({c}, m_replace->text());
+    if (c->text.contains(s->findText, s->findCase)) return step(1);
+    s->findCurrent = next;  // c no longer matches: move on to the match after it
+    step(0);
 }

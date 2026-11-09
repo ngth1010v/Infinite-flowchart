@@ -27,6 +27,15 @@ public:
     int linkAnchor = -1;             // linkTarget's anchor under the cursor (see NodeItem::hitAnchor)
     void setLinkTarget(NodeItem* n, int anchor = -1);
 
+    // Find (Ctrl+F): items whose text contains findText (case per findCase) get their matches highlighted;
+    // findCurrent is the id of the item the find panel is on.
+    QString findText;
+    int findCurrent = 0;
+    Qt::CaseSensitivity findCase = Qt::CaseInsensitive;
+    QList<ChartItem*> findMatches() const;  // in reading order: top to bottom, then left to right
+    // Undoable, one step: in each item, every occurrence of findText becomes `with`. Returns how many items changed.
+    int replaceText(const QList<ChartItem*>& items, const QString& with);
+
     // Where a link end dragged to `pos` goes. `shown` is the nearest shape (not `exclude`), whose
     // anchors are drawn; `node` is what the end attaches to (null: empty canvas). `other` is the
     // link's opposite end, which the center anchor turns to face.

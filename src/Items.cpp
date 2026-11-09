@@ -17,6 +17,7 @@
 
 namespace {
 const QColor kAccent(37, 99, 235);
+const QColor kFindMatch(250, 204, 21, 150), kFindCurrent(249, 115, 22, 200);  // find highlights: yellow, orange
 constexpr double kMargin = 64;  // room around a node for handles and quick-connect arrows (at 2x uiUnit)
 constexpr double kMinSize = 20;
 }  // namespace
@@ -339,6 +340,13 @@ void NodeItem::paint(QPainter* p, const QStyleOptionGraphicsItem* opt, QWidget*)
     const auto* c = chart();
     if (!c || c->overlaysHidden) return;
     const double u = uiUnit();
+    if (c->findCurrent == id && !c->findText.isEmpty()) {  // the find panel's current match
+        QPen fp(kFindCurrent, 3);
+        fp.setCosmetic(true);
+        p->setPen(fp);
+        p->setBrush(Qt::NoBrush);
+        p->drawRect(rect().adjusted(-6 * u, -6 * u, 6 * u, 6 * u));
+    }
     if (isSelected()) {
         QPen sel(kAccent, 1.5);
         sel.setCosmetic(true);
@@ -387,12 +395,21 @@ void NodeItem::drawTextIn(QPainter* p, const QRectF& box) {
         m_layoutText = text, m_layoutFont = f;
     }
     p->setFont(f);
-    const double lh = QFontMetricsF(f).lineSpacing();
+    const QFontMetricsF fm(f);
+    const double lh = fm.lineSpacing();
+    const auto* c = chart();
+    const QString find = c && !c->overlaysHidden ? c->findText : QString();
+    const QColor mark = c && c->findCurrent == id ? kFindCurrent : kFindMatch;
     double y = box.top() + (box.height() - lh * m_lines.size()) / 2;
     for (const auto& [st, bullet] : std::as_const(m_lines)) {
         double x = box.left();
         if (!bullet && (style.align & Qt::AlignRight)) x = box.right() - st.size().width();
         else if (!bullet && (style.align & Qt::AlignHCenter)) x = box.left() + (box.width() - st.size().width()) / 2;
+        if (!find.isEmpty()) {  // find highlights, behind the text
+            const QString s = st.text();
+            for (qsizetype i = s.indexOf(find, 0, c->findCase); i >= 0; i = s.indexOf(find, i + find.size(), c->findCase))
+                p->fillRect(QRectF(x + fm.horizontalAdvance(s.left(i)), y, fm.horizontalAdvance(s.mid(i, find.size())), lh), mark);
+        }
         p->drawStaticText(QPointF(x, y), st);
         y += lh;
     }
@@ -899,6 +916,8 @@ void LinkItem::paint(QPainter* p, const QStyleOptionGraphicsItem* opt, QWidget*)
     if (!m_label.isEmpty() && !m_editor && lod * style.fontSize >= 4) {
         p->setBrush(style.fill);  // transparent by default
         p->drawRoundedRect(m_label, 3, 3);
+        if (c && !c->overlaysHidden && !c->findText.isEmpty() && text.contains(c->findText, c->findCase))
+            p->fillRect(m_label, c->findCurrent == id ? kFindCurrent : kFindMatch);
         p->setPen(style.text);
         p->setFont(styleFont(style));
         p->drawText(m_label, int(style.align) | Qt::AlignVCenter, text);
