@@ -75,8 +75,8 @@ public:
     void startEdit();
     bool isLinking() const { return m_mode == Mode::Link; }  // dragging out a new link from an arrow
     bool isResizing() const { return m_mode == Mode::Resize; }
-    // Height the text area needs to show `t` wrapped at `width` (padding included).
-    double textHeight(const QString& t, double width) const;
+    // Height the text area needs to show `t`, one row per line (padding included).
+    double textHeight(const QString& t) const;
     // Grow (never below minSize) so `t` fits: wider first, then taller. The top edge stays in place.
     void growToFit(const QString& t, QSizeF minSize);
 
@@ -107,11 +107,9 @@ private:
     bool m_lockX = false, m_lockY = false;  // edge handle: that axis keeps its size
     QPointF m_prevPos;  // to know how far a container moved, so its contents follow
     // Laid-out text, kept between paints (see drawTextIn); redone when these keys change.
-    QStaticText m_textLayout;
+    QList<std::pair<QStaticText, bool>> m_lines;  // each line, and whether it is a bullet
     QString m_layoutText;
     QFont m_layoutFont;
-    double m_layoutWidth = -1;
-    Qt::Alignment m_layoutAlign;
     void drawTextIn(QPainter* p, const QRectF& box);
     mutable QPainterPath m_shapeCache;  // last shape() result, see there
     mutable int m_shapeCacheKey = -1;   // -1 = stale

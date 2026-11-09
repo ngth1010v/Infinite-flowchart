@@ -126,13 +126,14 @@ void NodeItem::startEdit() {
     if (rotated) ed->setRotation(-90);
     QTextOption opt = ed->document()->defaultTextOption();
     opt.setAlignment(style.align);
+    opt.setWrapMode(QTextOption::NoWrap);  // lines never break; the shape widens instead
     ed->document()->setDefaultTextOption(opt);
     ed->setPlainText(text);
     ed->setTextInteractionFlags(Qt::TextEditorInteraction);
     const QSizeF startSize = size;
     const QPointF startPos = pos();
     auto place = [this, ed, rotated, startSize] {
-        if (!rotated) {  // live: grow while typing, and wrap at the new width
+        if (!rotated) {  // live: grow while typing
             growToFit(ed->toPlainText(), startSize);
             ed->setTextWidth(std::max(10.0, textRect().width() - 16));
         }
@@ -161,25 +162,22 @@ void NodeItem::startEdit() {
     update();
 }
 
-double NodeItem::textHeight(const QString& t, double width) const {
-    const QFontMetricsF fm(styleFont(style));
-    const int flags = int(style.align) | Qt::TextWordWrap;
-    const double h = fm.boundingRect(QRectF(0, 0, std::max(10.0, width), 1e6), flags, t.isEmpty() ? QStringLiteral(" ") : t).height();
+// A line starting with "- " shows as a bullet, left-aligned whatever the shape's alignment.
+static bool isBullet(const QString& line) { return line.startsWith(QLatin1String("- ")); }
+static QString shownLine(const QString& line) { return isBullet(line) ? QChar(0x2022) + line.mid(1) : line; }
+
+double NodeItem::textHeight(const QString& t) const {
+    const double h = (t.count(u'\n') + 1) * QFontMetricsF(styleFont(style)).lineSpacing();
     return h + 8 + 16;  // paint() keeps 4 px top and bottom, plus some breathing room
 }
 
 void NodeItem::growToFit(const QString& t, QSizeF minSize) {
     if (isContainer(shapeType)) return;  // container titles live in the header band
-    // Widen first, up to kMaxTextWidth, so long text reads in lines, not a tall column; a single
-    // longer word widens past it, since word wrap cannot break it. Then grow the height to fit.
-    constexpr double kMaxTextWidth = 320;
+    // Text never wraps: widen to the longest line, then grow the height to fit the line count.
     const QFontMetricsF fm(styleFont(style));
-    double lineW = 0, wordW = 0;
-    for (const QString& line : t.split('\n')) {
-        lineW = std::max(lineW, fm.horizontalAdvance(line));
-        for (const QString& word : line.split(' ', Qt::SkipEmptyParts)) wordW = std::max(wordW, fm.horizontalAdvance(word));
-    }
-    const double needW = std::max(std::min(lineW, kMaxTextWidth), wordW) + 16 + 2;  // paint() keeps 8 px each side
+    double lineW = 0;
+    for (const QString& line : t.split(u'\n')) lineW = std::max(lineW, fm.horizontalAdvance(shownLine(line)));
+    const double needW = lineW + 16 + 2;  // paint() keeps 8 px each side
     // The text area is an inset of the node (shapeTextRect), so grow the node until that area fits.
     QSizeF sz = minSize;
     for (int i = 0; i < 20; ++i) {
@@ -188,7 +186,7 @@ void NodeItem::growToFit(const QString& t, QSizeF minSize) {
             sz.rwidth() += (needW - area.width()) * sz.width() / std::max(1.0, area.width());
             continue;
         }
-        const double needH = textHeight(t, area.width() - 16);
+        const double needH = textHeight(t);
         if (area.height() < needH - 0.5) {
             sz.rheight() += (needH - area.height()) * sz.height() / std::max(1.0, area.height());
             continue;
@@ -373,23 +371,31 @@ void NodeItem::paint(QPainter* p, const QStyleOptionGraphicsItem* opt, QWidget*)
     }
 }
 
-// `text` wrapped to box's width, centered vertically in it: what drawText(box, align | AlignVCenter
-// | TextWordWrap) draws. The layout is kept until the text, font, width or alignment changes;
-// laying the text out again on every paint was a large part of each frame.
+// `text` line by line (never wrapped), centered vertically in box. Each line follows style.align,
+// except bullet lines, which sit at the left. The laid-out lines are kept until the text or font
+// changes; laying the text out again on every paint was a large part of each frame.
 void NodeItem::drawTextIn(QPainter* p, const QRectF& box) {
     const QFont f = styleFont(style);
-    if (m_layoutText != text || m_layoutFont != f || m_layoutWidth != box.width() || m_layoutAlign != style.align) {
-        m_textLayout = QStaticText(QString(text).replace(u'\n', QChar::LineSeparator));  // it ignores plain '\n'
-        m_textLayout.setTextFormat(Qt::PlainText);
-        m_textLayout.setTextWidth(box.width());
-        QTextOption o(style.align);
-        o.setWrapMode(QTextOption::WordWrap);
-        m_textLayout.setTextOption(o);
-        m_textLayout.prepare(QTransform(), f);
-        m_layoutText = text, m_layoutFont = f, m_layoutWidth = box.width(), m_layoutAlign = style.align;
+    if (m_layoutText != text || m_layoutFont != f) {
+        m_lines.clear();
+        for (const QString& line : text.split(u'\n')) {
+            QStaticText st(shownLine(line));
+            st.setTextFormat(Qt::PlainText);
+            st.prepare(QTransform(), f);
+            m_lines.push_back({st, isBullet(line)});
+        }
+        m_layoutText = text, m_layoutFont = f;
     }
     p->setFont(f);
-    p->drawStaticText(QPointF(box.left(), box.top() + (box.height() - m_textLayout.size().height()) / 2), m_textLayout);
+    const double lh = QFontMetricsF(f).lineSpacing();
+    double y = box.top() + (box.height() - lh * m_lines.size()) / 2;
+    for (const auto& [st, bullet] : std::as_const(m_lines)) {
+        double x = box.left();
+        if (!bullet && (style.align & Qt::AlignRight)) x = box.right() - st.size().width();
+        else if (!bullet && (style.align & Qt::AlignHCenter)) x = box.left() + (box.width() - st.size().width()) / 2;
+        p->drawStaticText(QPointF(x, y), st);
+        y += lh;
+    }
 }
 
 QVariant NodeItem::itemChange(GraphicsItemChange change, const QVariant& value) {

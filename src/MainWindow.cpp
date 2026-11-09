@@ -526,7 +526,10 @@ void MainWindow::exportChart(bool forLlm) {
         return;
     }
     const QString base = m_path.isEmpty() ? tr("Untitled") : QFileInfo(m_path).completeBaseName();
-    const QString dir = QSettings().value("lastDir", QDir::homePath()).toString();
+    // Each chart remembers where it was last exported (keyed by its file path; "" for untitled).
+    QVariantMap exportDirs = QSettings().value("exportDirs").toMap();
+    const QString dir = exportDirs.value(m_path, m_path.isEmpty() ? QSettings().value("lastDir", QDir::homePath()).toString()
+                                                                  : QFileInfo(m_path).absolutePath()).toString();
     QString filter;
     const QStringList exts = forLlm ? QStringList{"md", "txt"} : QStringList{"png", "svg", "pdf"};
     const QString filters = forLlm ? tr("Markdown for LLM (*.md);;Plain text for LLM (*.txt)")
@@ -541,8 +544,10 @@ void MainWindow::exportChart(bool forLlm) {
         path += "." + ext;
     }
 
+    exportDirs[m_path] = QFileInfo(path).absolutePath();
+    QSettings().setValue("exportDirs", exportDirs);
     const bool ok = m_scene->exportTo(path);
-    if (!ok) QMessageBox::warning(this, tr("Export failed"), tr("Cannot write %1.").arg(QDir::toNativeSeparators(path)));
+    if (!ok)QMessageBox::warning(this, tr("Export failed"), tr("Cannot write %1.").arg(QDir::toNativeSeparators(path)));
 }
 
 void MainWindow::copy() {

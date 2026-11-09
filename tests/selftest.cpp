@@ -257,13 +257,13 @@ int main(int argc, char** argv) {
         // Typing a long text grows the node; its top edge stays put.
         const double topEdge = mid->pos().y() - mid->size.height() / 2;
         sc.setItemText(mid, QString("word ").repeated(60));
-        CHECK(mid->size.height() > 70 && std::abs(mid->pos().y() - mid->size.height() / 2 - topEdge) < 0.01);
-        CHECK(mid->size.width() > 300 && mid->size.width() < 345);  // widened up to the cap, then taller
+        CHECK(std::abs(mid->pos().y() - mid->size.height() / 2 - topEdge) < 0.01);
+        CHECK(mid->size.width() > QFontMetricsF(styleFont(mid->style)).horizontalAdvance(QString("word ").repeated(59)));  // never wraps: widens
         sc.undoStack()->undo();
         CHECK(std::abs(mid->size.height() - 70) < 0.01 && std::abs(mid->size.width() - 140) < 0.01);
-        // One long word with no spaces cannot wrap, so the node widens to fit it.
-        sc.setItemText(mid, QString("x").repeated(80));
-        CHECK(mid->size.width() > QFontMetricsF(QFont()).horizontalAdvance(QString("x").repeated(40)));
+        // Only new lines make it taller: one row per line.
+        sc.setItemText(mid, QString("a\n").repeated(8) + "- bullet");
+        CHECK(mid->size.height() > 9 * QFontMetricsF(styleFont(mid->style)).lineSpacing() && mid->size.width() < 140.01);
         sc.undoStack()->undo();
     }
 
