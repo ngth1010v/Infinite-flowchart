@@ -4,7 +4,11 @@
 #include "ChartView.h"
 #include "MainWindow.h"
 #include "Panels.h"
+#include <QFile>
+#include <QJsonDocument>
 #include <QLineEdit>
+#include <QTabBar>
+#include <QTemporaryDir>
 #include <QToolButton>
 #include <QUndoStack>
 #include <QApplication>
@@ -404,6 +408,47 @@ int main(int argc, char** argv) {
         CHECK(std::abs(mid.x() - n1->pos().x()) < 2 && std::abs(mid.y() - n1->pos().y()) < 2);
         f.close();
         CHECK(s.findText.isEmpty());
+    }
+
+    // Tabs: one per open file; reopening a file shows its tab; an untouched Untitled tab gives its
+    // place to the next opened file; closing the last tab closes the window.
+    {
+        QTemporaryDir dir;
+        auto writeChart = [&](const QString& name) {
+            ChartScene s;
+            s.addNode(FlowShape::Process, {0, 0});
+            QFile f(dir.filePath(name));
+            f.open(QIODevice::WriteOnly);
+            f.write(QJsonDocument(s.toJson()).toJson());
+            return f.fileName();
+        };
+        const QString a = writeChart("a.flowx"), b = writeChart("b.flowx");
+        MainWindow w;
+        w.show();
+        CHECK(QTest::qWaitForWindowExposed(&w));
+        auto* bar = w.findChild<QTabBar*>();
+        CHECK(w.openFile(a) && w.openFile(b) && w.tabCount() == 2);
+        CHECK(bar->tabText(0) == "a" && bar->tabText(1) == "b" && bar->currentIndex() == 1);
+        CHECK(w.openFile(a) && w.tabCount() == 2 && bar->currentIndex() == 0);
+        emit bar->tabCloseRequested(1);
+        CHECK(w.tabCount() == 1);
+        QTest::keyClick(&w, Qt::Key_N, Qt::ControlModifier);
+        CHECK(w.tabCount() == 2 && bar->tabText(1) == "Untitled");
+        CHECK(w.openFile(b) && w.tabCount() == 2 && bar->tabText(1) == "b");
+        // Each tab keeps its own undo history; Undo follows the current tab.
+        const auto views = w.findChildren<ChartView*>();
+        CHECK(views.size() == 2);
+        ChartScene *sb = nullptr, *sa = nullptr;
+        for (auto* v : views) (v->isVisible() ? sb : sa) = v->chart();  // b's tab is current
+        CHECK(sa && sb);
+        sb->addNode(FlowShape::Process, {300, 0});
+        CHECK(bar->tabText(1) == "b •" && sa->undoStack()->isClean());
+        sb->undoStack()->undo();
+        CHECK(bar->tabText(1) == "b");
+        emit bar->tabCloseRequested(1);
+        CHECK(w.tabCount() == 1 && w.isVisible());
+        emit bar->tabCloseRequested(0);
+        CHECK(w.tabCount() == 0 && !w.isVisible());
     }
 
     std::printf("OK  gui interactions\n");

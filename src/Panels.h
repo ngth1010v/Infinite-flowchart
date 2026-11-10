@@ -39,7 +39,8 @@ private:
 class StylePanel : public QWidget {
     Q_OBJECT
 public:
-    explicit StylePanel(ChartScene* scene, QWidget* parent = nullptr);
+    explicit StylePanel(ChartScene* scene, QWidget* parent = nullptr);  // scene may be null
+    void setScene(ChartScene* scene);  // follow another chart (tab switch)
     void refresh();
 
 private:
@@ -71,7 +72,8 @@ class QLineEdit;
 class FindPanel : public QWidget {
     Q_OBJECT
 public:
-    FindPanel(ChartView* view, QWidget* parent);
+    FindPanel(ChartView* view, QWidget* parent);  // view may be null
+    void setView(ChartView* view);  // search another chart (tab switch)
     void open();  // show (first time: top-right of the canvas) and focus the search box
     void refresh();  // recount matches after the chart changed
 

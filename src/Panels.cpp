@@ -322,15 +322,28 @@ StylePanel::StylePanel(ChartScene* scene, QWidget* parent) : QWidget(parent), m_
     lay->addWidget(m_linkBox);
     lay->addStretch();
 
-    connect(scene, &QGraphicsScene::selectionChanged, this, &StylePanel::refresh);
-    connect(scene->undoStack(), &QUndoStack::indexChanged, this, [this] {
-        if (!m_applying) refresh();  // undo/redo or canvas edits; skip our own pushes
-    });
+    m_scene = nullptr;
+    setScene(scene);
+}
+
+void StylePanel::setScene(ChartScene* scene) {
+    if (m_scene) {
+        disconnect(m_scene, nullptr, this, nullptr);
+        disconnect(m_scene->undoStack(), nullptr, this, nullptr);
+    }
+    m_scene = scene;
+    if (scene) {
+        connect(scene, &QGraphicsScene::selectionChanged, this, &StylePanel::refresh);
+        connect(scene->undoStack(), &QUndoStack::indexChanged, this, [this] {
+            if (!m_applying) refresh();  // undo/redo or canvas edits; skip our own pushes
+        });
+        connect(scene, &QObject::destroyed, this, [this] { m_scene = nullptr; });
+    }
     refresh();
 }
 
 void StylePanel::edit(const QString& key, const std::function<void(ChartItem*)>& fn) {
-    if (m_updating) return;
+    if (m_updating || !m_scene) return;
     m_applying = true;
     m_scene->editSelected(key, fn);
     m_applying = false;
@@ -385,7 +398,7 @@ void StylePanel::showColor(QToolButton* b, const std::optional<QColor>& c) {
 }
 
 void StylePanel::refresh() {
-    const QList<ChartItem*> items = m_scene->selectedChartItems();
+    const QList<ChartItem*> items = m_scene ? m_scene->selectedChartItems() : QList<ChartItem*>();
     QList<ChartItem*> nodes, links;
     for (auto* c : items) (c->type() == NodeItem::Type ? nodes : links) << c;
     m_text->setEnabled(!items.isEmpty());
@@ -464,6 +477,7 @@ FindPanel::FindPanel(ChartView* view, QWidget* parent) : QWidget(parent, Qt::Too
     g->setContentsMargins(6, 6, 6, 6);
     g->setSpacing(4);
     m_case = button(QStringLiteral("Aa"), tr("Match case (Alt+C)"), [this] {
+        if (!m_view) return;
         m_view->chart()->findCase = m_case->isChecked() ? Qt::CaseSensitive : Qt::CaseInsensitive;
         step(0);
     });
@@ -489,12 +503,31 @@ FindPanel::FindPanel(ChartView* view, QWidget* parent) : QWidget(parent, Qt::Too
     new QShortcut(QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_Return), this, [this] { replace(true); });
     new QShortcut(QKeySequence(Qt::Key_Escape), this, [this] { close(); });
     new QShortcut(QKeySequence::Find, this, [this] { open(); });  // Ctrl+F again: back to the search box
-    connect(view->chart()->undoStack(), &QUndoStack::indexChanged, this, [this] {
+    m_view = nullptr;
+    setView(view);
+}
+
+void FindPanel::setView(ChartView* view) {
+    if (m_view == view) return;
+    if (m_view) {  // the old chart stops highlighting
+        ChartScene* s = m_view->chart();
+        disconnect(s->undoStack(), nullptr, this, nullptr);
+        s->findText.clear();
+        s->findCurrent = 0;
+        s->update();
+    }
+    m_view = view;
+    if (!view) return hide();
+    ChartScene* s = view->chart();
+    s->findCase = m_case->isChecked() ? Qt::CaseSensitive : Qt::CaseInsensitive;
+    connect(s->undoStack(), &QUndoStack::indexChanged, this, [this] {
         if (isVisible()) refresh();
     });
+    if (isVisible()) step(0);
 }
 
 void FindPanel::open() {
+    if (!m_view) return;
     if (!m_placed) {  // top-right corner of the canvas, clear of the minimap
         m_placed = true;
         adjustSize();
@@ -520,6 +553,7 @@ void FindPanel::hideEvent(QHideEvent* e) {
 }
 
 void FindPanel::refresh() {
+    if (!m_view) return;
     ChartScene* s = m_view->chart();
     const auto matches = s->findMatches();
     const int i = int(std::find_if(matches.begin(), matches.end(), [s](ChartItem* c) { return c->id == s->findCurrent; }) -
@@ -531,6 +565,7 @@ void FindPanel::refresh() {
 }
 
 void FindPanel::step(int dir) {
+    if (!m_view) return;
     ChartScene* s = m_view->chart();
     s->findText = m_find->text();
     const auto matches = s->findMatches();
@@ -549,6 +584,7 @@ void FindPanel::step(int dir) {
 }
 
 void FindPanel::replace(bool all) {
+    if (!m_view) return;
     ChartScene* s = m_view->chart();
     if (s->findText.isEmpty()) return;
     if (all) {

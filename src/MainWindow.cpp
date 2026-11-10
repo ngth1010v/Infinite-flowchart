@@ -20,6 +20,7 @@
 #include <QMessageBox>
 #include <QMimeData>
 #include <QPainter>
+#include <QProxyStyle>
 #include <QRegularExpression>
 #include <QSaveFile>
 #include <QScrollArea>
@@ -30,8 +31,11 @@
 #include <QStatusBar>
 #include <QStyle>
 #include <QStyleHints>
+#include <QTabBar>
 #include <QToolButton>
+#include <QUndoGroup>
 #include <QUndoStack>
+#include <QUuid>
 
 namespace {
 constexpr int kPaletteOpen = 230, kPaletteClosed = 72, kPanelOpen = 300;
@@ -44,11 +48,31 @@ struct OverlaysHidden {
     ~OverlaysHidden() { s->overlaysHidden = false; }
 };
 
+// Tabs with less room around the name and close button than the style's default.
+class CompactTabStyle : public QProxyStyle {
+public:
+    CompactTabStyle() : QProxyStyle(QApplication::style()->name()) {}  // same look as the rest (Fusion)
+    int pixelMetric(PixelMetric m, const QStyleOption* o, const QWidget* w) const override {
+        const int v = QProxyStyle::pixelMetric(m, o, w);
+        return m == PM_TabBarTabHSpace || m == PM_TabBarTabVSpace ? qRound(v * 0.6) : v;
+    }
+};
+
+// Its default minimum width keeps room for the scroll arrows, wider than a single tab, and layouts
+// never go below it: that left a gap before '+'. Now the bar is as wide as its tabs.
+class TabBar : public QTabBar {
+public:
+    QSize minimumSizeHint() const override {
+        const QSize s = QTabBar::minimumSizeHint();
+        return {qMin(s.width(), sizeHint().width()), s.height()};
+    }
+};
+
 }  // namespace
 
 MainWindow::MainWindow() {
-    m_scene = new ChartScene(this);
-    m_view = new ChartView(m_scene);
+    m_undoGroup = new QUndoGroup(this);
+    m_views = new QStackedWidget;
 
     m_palette = new ShapePalette;
     m_paletteBox = new QWidget;
@@ -69,8 +93,8 @@ MainWindow::MainWindow() {
     connect(m_shortcutsButton, &QToolButton::clicked, this, &MainWindow::showShortcuts);
     pl->addWidget(m_shortcutsButton);
 
-    m_panel = new StylePanel(m_scene);
-    m_find = new FindPanel(m_view, this);
+    m_panel = new StylePanel(nullptr);
+    m_find = new FindPanel(nullptr, this);
     m_panelScroll = new QScrollArea;
     m_panelScroll->setWidget(m_panel);
     m_panelScroll->setWidgetResizable(true);
@@ -102,14 +126,46 @@ MainWindow::MainWindow() {
     sl->addWidget(m_panelToggle);
     sl->addStretch();
 
-    m_chartPage = new QWidget;
-    auto* h = new QHBoxLayout(m_chartPage);
+    // Tab bar across the top, like a browser: one tab per open chart, '+' opens more.
+    m_tabs = new TabBar;
+    m_tabs->setTabsClosable(true);
+    m_tabs->setMovable(true);
+    m_tabs->setDocumentMode(true);
+    m_tabs->setExpanding(false);
+    m_tabs->setUsesScrollButtons(true);
+    m_tabs->setElideMode(Qt::ElideRight);
+    m_tabs->setFocusPolicy(Qt::NoFocus);
+    auto* tabStyle = new CompactTabStyle;
+    tabStyle->setParent(m_tabs);
+    m_tabs->setStyle(tabStyle);
+    auto* plus = new QToolButton;
+    plus->setText(QStringLiteral("+"));
+    plus->setFixedSize(22, 22);  // shorter than the tabs, so the row stays as tall as the tab bar
+    plus->setToolTip(tr("Open charts in new tabs (Ctrl+O)"));
+    QFont pf = plus->font();
+    pf.setPointSizeF(pf.pointSizeF() * 1.3);
+    plus->setFont(pf);
+    connect(plus, &QToolButton::clicked, this, &MainWindow::openDialog);
+    auto* tabRow = new QHBoxLayout;
+    tabRow->setContentsMargins(0, 0, 0, 0);
+    tabRow->setSpacing(3);
+    tabRow->addWidget(m_tabs, 0, Qt::AlignTop);
+    tabRow->addWidget(plus, 0, Qt::AlignVCenter);
+    tabRow->addStretch(1);
+
+    auto* h = new QHBoxLayout;
     h->setContentsMargins(0, 0, 0, 0);
     h->setSpacing(0);
     h->addWidget(m_paletteBox);
-    h->addWidget(m_view, 1);
+    h->addWidget(m_views, 1);
     h->addWidget(m_panelScroll);
     h->addWidget(panelStrip);
+    m_chartPage = new QWidget;
+    auto* v = new QVBoxLayout(m_chartPage);
+    v->setContentsMargins(0, 0, 0, 0);
+    v->setSpacing(0);
+    v->addLayout(tabRow);
+    v->addLayout(h, 1);
 
     m_home = new HomeScreen;
     m_stack = new QStackedWidget;
@@ -130,13 +186,13 @@ MainWindow::MainWindow() {
         else openFile(p);
     });
     connect(m_palette, &ShapePalette::shapeClicked, this, [this](FlowShape s) {
-        m_scene->addNode(s, m_view->visibleCenter());
-        m_view->setFocus();
+        if (!cur()) return;
+        scene()->addNode(s, view()->visibleCenter());
+        view()->setFocus();
     });
     connect(m_panelToggle, &QToolButton::clicked, m_panelAction, &QAction::toggle);
-    connect(m_scene->undoStack(), &QUndoStack::cleanChanged, this, &MainWindow::updateTitle);
-    connect(m_view, &ChartView::zoomChanged, this,
-            [this](double z) { m_zoomLabel->setText(QStringLiteral("%1%").arg(qRound(z * 100))); });
+    connect(m_tabs, &QTabBar::currentChanged, this, &MainWindow::currentTabChanged);
+    connect(m_tabs, &QTabBar::tabCloseRequested, this, &MainWindow::closeTab);
 
     m_autosave.setInterval(QSettings().value("autosaveMinutes", 1).toInt() * 60'000);
     connect(&m_autosave, &QTimer::timeout, this, &MainWindow::autosave);
@@ -163,8 +219,8 @@ void MainWindow::buildMenus() {
     makeAction(file, tr("&New chart"), {QKeySequence::New}, [this] { newChart(); }, false);
     makeAction(file, tr("&Open…"), {QKeySequence::Open}, [this] { openDialog(); }, false);
     file->addSeparator();
-    makeAction(file, tr("&Save"), {QKeySequence::Save}, [this] { save(); });
-    makeAction(file, tr("Save &as…"), {QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_S)}, [this] { saveAs(); });
+    makeAction(file, tr("&Save"), {QKeySequence::Save}, [this] { save(cur()); });
+    makeAction(file, tr("Save &as…"), {QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_S)}, [this] { saveAs(cur()); });
     makeAction(file, tr("&Export as PNG / SVG / PDF…"), {QKeySequence(Qt::CTRL | Qt::Key_E)}, [this] { exportChart(); });
     makeAction(file, tr("Export for &LLM (text)…"), {QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_E)},
                [this] { exportChart(true); });
@@ -177,77 +233,84 @@ void MainWindow::buildMenus() {
         m_autosave.start(min * 60'000);
     }, false);
     file->addSeparator();
-    makeAction(file, tr("&Close chart (go home)"), {QKeySequence(Qt::CTRL | Qt::Key_W)}, [this] { goHome(); });
+    makeAction(file, tr("&Close tab"), {QKeySequence(Qt::CTRL | Qt::Key_W)}, [this] { closeTab(m_tabs->currentIndex()); });
     makeAction(file, tr("E&xit"), {QKeySequence(Qt::ALT | Qt::Key_F4)}, [this] { close(); }, false);
 
     auto* edit = menuBar()->addMenu(tr("&Edit"));
-    auto* undo = m_scene->undoStack()->createUndoAction(this, tr("&Undo"));
+    auto* undo = m_undoGroup->createUndoAction(this, tr("&Undo"));
     undo->setShortcuts(QKeySequence::Undo);
-    auto* redo = m_scene->undoStack()->createRedoAction(this, tr("&Redo"));
+    auto* redo = m_undoGroup->createRedoAction(this, tr("&Redo"));
     redo->setShortcuts({QKeySequence(Qt::CTRL | Qt::Key_Y), QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_Z)});
     edit->addAction(undo);
     edit->addAction(redo);
     edit->addSeparator();
     makeAction(edit, tr("Cu&t"), {QKeySequence::Cut}, [this] {
         copy();
-        m_scene->deleteSelected();
+        scene()->deleteSelected();
     });
     makeAction(edit, tr("&Copy"), {QKeySequence::Copy}, [this] { copy(); });
     makeAction(edit, tr("&Paste"), {QKeySequence::Paste}, [this] { paste(); });
     makeAction(edit, tr("&Duplicate"), {QKeySequence(Qt::CTRL | Qt::Key_D)},
-               [this] { m_scene->paste(m_scene->copySelection(), {20, 20}); });
+               [this] { scene()->paste(scene()->copySelection(), {20, 20}); });
     makeAction(edit, tr("De&lete"), {QKeySequence::Delete, QKeySequence(Qt::Key_Backspace)},
-               [this] { m_scene->deleteSelected(); });
+               [this] { scene()->deleteSelected(); });
     edit->addSeparator();
     makeAction(edit, tr("&Find && replace"), {QKeySequence::Find}, [this] { m_find->open(); });
-    makeAction(edit, tr("Select &all"), {QKeySequence::SelectAll}, [this] { m_scene->selectAll(); });
+    makeAction(edit, tr("Select &all"), {QKeySequence::SelectAll}, [this] { scene()->selectAll(); });
     // Shapes first, so a selected container then wraps them at their fitted size.
     makeAction(edit, tr("&Fit to content"), {QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_F)}, [this] {
-        m_scene->fitSelectedShapes();
-        m_scene->fitSelectedContainers();
+        scene()->fitSelectedShapes();
+        scene()->fitSelectedContainers();
     });
     makeAction(edit, tr("&Reset link path"), {}, [this] {
-        m_scene->editSelected(QString(), [](ChartItem* c) {
+        scene()->editSelected(QString(), [](ChartItem* c) {
             if (auto* l = qgraphicsitem_cast<LinkItem*>(c)) l->path.clear();
         });
     });
 
-    auto* view = menuBar()->addMenu(tr("&View"));
-    makeAction(view, tr("&Fit whole chart"), {QKeySequence(Qt::CTRL | Qt::Key_1)}, [this] { m_view->fitAll(); });
-    makeAction(view, tr("Actual size (100%)"), {QKeySequence(Qt::CTRL | Qt::Key_0)}, [this] { m_view->resetZoom(); });
-    makeAction(view, tr("Zoom &in"), {QKeySequence(Qt::CTRL | Qt::Key_Equal), QKeySequence(Qt::CTRL | Qt::Key_Plus)},
-               [this] { m_view->zoomBy(1.25, false); });
-    makeAction(view, tr("Zoom &out"), {QKeySequence(Qt::CTRL | Qt::Key_Minus)}, [this] { m_view->zoomBy(0.8, false); });
-    view->addSeparator();
-    auto* snap = makeAction(view, tr("&Snap to grid && guides"), {}, [] {});
+    auto* viewMenu = menuBar()->addMenu(tr("&View"));
+    makeAction(viewMenu, tr("&Fit whole chart"), {QKeySequence(Qt::CTRL | Qt::Key_1)}, [this] { view()->fitAll(); });
+    makeAction(viewMenu, tr("Actual size (100%)"), {QKeySequence(Qt::CTRL | Qt::Key_0)}, [this] { view()->resetZoom(); });
+    makeAction(viewMenu, tr("Zoom &in"), {QKeySequence(Qt::CTRL | Qt::Key_Equal), QKeySequence(Qt::CTRL | Qt::Key_Plus)},
+               [this] { view()->zoomBy(1.25, false); });
+    makeAction(viewMenu, tr("Zoom &out"), {QKeySequence(Qt::CTRL | Qt::Key_Minus)}, [this] { view()->zoomBy(0.8, false); });
+    viewMenu->addSeparator();
+    auto* snap = makeAction(viewMenu, tr("&Snap to grid && guides"), {}, [] {});
     snap->setCheckable(true);
     snap->setChecked(QSettings().value("snap", true).toBool());
-    m_scene->snapEnabled = snap->isChecked();
+    m_snap = snap->isChecked();
     connect(snap, &QAction::toggled, this, [this](bool on) {
-        m_scene->snapEnabled = on;
+        m_snap = on;
+        for (int i = 0; i < m_tabs->count(); ++i) tab(i)->scene->snapEnabled = on;
         QSettings().setValue("snap", on);
     });
-    auto* minimap = makeAction(view, tr("&Minimap"), {}, [] {});
+    auto* minimap = makeAction(viewMenu, tr("&Minimap"), {}, [] {});
     minimap->setCheckable(true);
     minimap->setChecked(QSettings().value("minimap", true).toBool());
-    m_view->setMinimapVisible(minimap->isChecked());
+    m_minimap = minimap->isChecked();
     connect(minimap, &QAction::toggled, this, [this](bool on) {
-        m_view->setMinimapVisible(on);
+        m_minimap = on;
+        for (int i = 0; i < m_tabs->count(); ++i) tab(i)->view->setMinimapVisible(on);
         QSettings().setValue("minimap", on);
     });
     minimap->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_M));
-    makeAction(edit, tr("&Bundle selected links"), {QKeySequence(Qt::CTRL | Qt::Key_L)}, [this] { m_scene->bundleSelectedLinks(); });
-    makeAction(view, tr("Shape panel: icons only"), {QKeySequence(Qt::CTRL | Qt::Key_B)},
+    makeAction(edit, tr("&Bundle selected links"), {QKeySequence(Qt::CTRL | Qt::Key_L)}, [this] { scene()->bundleSelectedLinks(); });
+    makeAction(viewMenu, tr("Shape panel: icons only"), {QKeySequence(Qt::CTRL | Qt::Key_B)},
                [this] { setPaletteCollapsed(!m_paletteCollapsed); });
     // Style panel starts closed every launch and opens only on request, not on selection.
-    m_panelAction = makeAction(view, tr("S&tyle panel"), {QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_B)}, [] {});
+    m_panelAction = makeAction(viewMenu, tr("S&tyle panel"), {QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_B)}, [] {});
     m_panelAction->setCheckable(true);
     connect(m_panelAction, &QAction::toggled, this, [this](bool on) {
         m_panelToggle->setText(on ? QStringLiteral("»") : QStringLiteral("«"));
         updatePanelVisibility();
     });
-    view->addSeparator();
-    auto* dark = makeAction(view, tr("&Dark theme"), {}, [] {}, false);
+    viewMenu->addSeparator();
+    makeAction(viewMenu, tr("&Next tab"), {QKeySequence(Qt::CTRL | Qt::Key_Tab)},
+               [this] { m_tabs->setCurrentIndex((m_tabs->currentIndex() + 1) % m_tabs->count()); });
+    makeAction(viewMenu, tr("&Previous tab"), {QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_Tab)},
+               [this] { m_tabs->setCurrentIndex((m_tabs->currentIndex() + m_tabs->count() - 1) % m_tabs->count()); });
+    viewMenu->addSeparator();
+    auto* dark =makeAction(viewMenu, tr("&Dark theme"), {}, [] {}, false);
     dark->setCheckable(true);
     dark->setChecked(QSettings().value("dark", false).toBool());
     connect(dark, &QAction::toggled, this, &MainWindow::applyTheme);
@@ -333,7 +396,7 @@ void MainWindow::resizeEvent(QResizeEvent* e) {
     if (m_shortcutsPanel) m_shortcutsPanel->setGeometry(rect());
 }
 
-// ---------------------------------------------------------------- screens
+// ---------------------------------------------------------------- screens & tabs
 
 bool MainWindow::onChart() const { return m_stack->currentWidget() == m_chartPage; }
 
@@ -351,31 +414,121 @@ void MainWindow::showHome() {
 }
 
 void MainWindow::showChart() {
+    if (onChart()) return;
     m_stack->setCurrentWidget(m_chartPage);
     for (auto* a : std::as_const(m_chartActions)) a->setEnabled(true);
     statusBar()->show();
-    updatePanelVisibility();  // back from home: reopen the style panel if it was open
-    m_view->setFocus();
+    updatePanelVisibility();  // reopen the style panel if it was open
 }
 
-void MainWindow::newChart() {
-    if (!maybeSave()) return;
-    m_scene->fromJson({});
-    m_path.clear();
-    removeAutosave();
+int MainWindow::tabCount() const { return m_tabs->count(); }
+
+ChartTab* MainWindow::tab(int index) const {
+    return static_cast<ChartTab*>(m_tabs->tabData(index).value<void*>());
+}
+
+ChartTab* MainWindow::cur() const { return m_tabs->count() ? tab(m_tabs->currentIndex()) : nullptr; }
+ChartScene* MainWindow::scene() const { return cur() ? cur()->scene : nullptr; }
+ChartView* MainWindow::view() const { return cur() ? cur()->view : nullptr; }
+
+int MainWindow::indexOf(const ChartTab* t) const {
+    for (int i = 0; i < m_tabs->count(); ++i)
+        if (tab(i) == t) return i;
+    return -1;
+}
+
+// New empty Untitled tab, made current.
+ChartTab* MainWindow::addTab() {
+    auto* t = new ChartTab;
+    t->scene = new ChartScene(this);
+    t->scene->snapEnabled = m_snap;
+    t->view = new ChartView(t->scene);
+    t->view->setDark(m_dark);
+    t->view->setMinimapVisible(m_minimap);
+    m_views->addWidget(t->view);
+    m_undoGroup->addStack(t->scene->undoStack());
+    connect(t->scene->undoStack(), &QUndoStack::cleanChanged, this, [this, t] {
+        updateTabText(t);
+        if (t == cur()) updateTitle();
+    });
+    connect(t->view, &ChartView::zoomChanged, this, [this, t](double z) {
+        if (t == cur()) m_zoomLabel->setText(QStringLiteral("%1%").arg(qRound(z * 100)));
+    });
+    const int i = m_tabs->addTab(QString());
+    m_tabs->setTabData(i, QVariant::fromValue<void*>(t));
+    updateTabText(t);
     showChart();
-    m_view->resetView();
+    m_tabs->setCurrentIndex(i);
+    currentTabChanged();  // also for the first tab, which QTabBar made current before its data was set
+    return t;
+}
+
+void MainWindow::currentTabChanged() {
+    ChartTab* t = cur();
+    if (!t) return;
+    m_views->setCurrentWidget(t->view);
+    m_undoGroup->setActiveStack(t->scene->undoStack());
+    m_panel->setScene(t->scene);
+    m_find->setView(t->view);
+    m_zoomLabel->setText(QStringLiteral("%1%").arg(qRound(t->view->zoom() * 100)));
+    t->view->setFocus();
+    m_pasteCount = 0;
     updateTitle();
 }
 
+void MainWindow::updateTabText(ChartTab* t) {
+    const int i = indexOf(t);
+    if (i < 0) return;
+    const QString name = t->path.isEmpty() ? tr("Untitled") : QFileInfo(t->path).completeBaseName();
+    m_tabs->setTabText(i, t->scene->undoStack()->isClean() ? name : name + QStringLiteral(" •"));
+    m_tabs->setTabToolTip(i, t->path.isEmpty() ? tr("Not saved yet") : QDir::toNativeSeparators(t->path));
+}
+
+bool MainWindow::closeTab(int index) {
+    ChartTab* t = tab(index);
+    if (!t) return false;
+    m_tabs->setCurrentIndex(index);  // show the chart the save question is about
+    if (!maybeSave(t)) return false;
+    removeRecovery(t);
+    const bool last = m_tabs->count() == 1;
+    removeTab(t);
+    if (last) close();  // there is always at least one tab: closing the last one closes the app
+    return true;
+}
+
+// Drops the tab without asking.
+void MainWindow::removeTab(ChartTab* t) {
+    if (m_tabs->count() == 1) {  // no other chart for the panels to follow
+        m_panel->setScene(nullptr);
+        m_find->setView(nullptr);
+    }
+    m_tabs->removeTab(indexOf(t));  // makes a neighbour current; currentTabChanged retargets the panels
+    m_undoGroup->removeStack(t->scene->undoStack());
+    delete t->view;
+    delete t->scene;
+    delete t;
+}
+
+void MainWindow::newChart() {
+    ChartTab* t = addTab();
+    t->view->resetView();
+}
+
 void MainWindow::openDialog() {
-    const QString dir = m_path.isEmpty() ? QSettings().value("lastDir").toString() : QFileInfo(m_path).absolutePath();
-    const QString path = QFileDialog::getOpenFileName(this, tr("Open chart"), dir, kFilter + ";;" + tr("All files (*)"));
-    if (!path.isEmpty()) openFile(path);
+    const QString dir = cur() && !cur()->path.isEmpty() ? QFileInfo(cur()->path).absolutePath()
+                                                        : QSettings().value("lastDir").toString();
+    const QStringList paths =
+        QFileDialog::getOpenFileNames(this, tr("Open charts"), dir, kFilter + ";;" + tr("All files (*)"));
+    for (const QString& p : paths) openFile(p);
 }
 
 bool MainWindow::openFile(const QString& path) {
-    if (!maybeSave()) return false;
+    const QString abs = QFileInfo(path).absoluteFilePath();
+    for (int i = 0; i < m_tabs->count(); ++i)
+        if (!tab(i)->path.isEmpty() && QFileInfo(tab(i)->path) == QFileInfo(abs)) {  // already open: show it
+            m_tabs->setCurrentIndex(i);
+            return true;
+        }
     QFile f(path);
     if (!f.open(QIODevice::ReadOnly)) {
         QMessageBox::warning(this, tr("Cannot open chart"), tr("Cannot open %1:\n%2").arg(QDir::toNativeSeparators(path), f.errorString()));
@@ -394,93 +547,100 @@ bool MainWindow::openFile(const QString& path) {
         QMessageBox::warning(this, tr("Cannot open chart"), tr("This file was made by a newer version of Flowchart."));
         return false;
     }
-    showChart();
-    m_scene->fromJson(o);
-    m_path = QFileInfo(path).absoluteFilePath();
-    QSettings().setValue("lastDir", QFileInfo(m_path).absolutePath());
-    removeAutosave();
-    HomeScreen::addRecent(m_path);
-    if (o.contains("view")) m_view->setViewState(o["view"].toObject());
-    else QTimer::singleShot(0, m_view, &ChartView::fitAll);  // after layout gives the view its size
+    // An empty Untitled tab nobody touched (e.g. right after Ctrl+N) gives its place to the file.
+    ChartTab* blank = cur();
+    if (blank && !(blank->path.isEmpty() && blank->scene->itemCount() == 0 && blank->scene->undoStack()->count() == 0))
+        blank = nullptr;
+    ChartTab* t = addTab();
+    t->scene->fromJson(o);
+    t->path = abs;
+    QSettings().setValue("lastDir", QFileInfo(abs).absolutePath());
+    HomeScreen::addRecent(abs);
+    if (o.contains("view")) t->view->setViewState(o["view"].toObject());
+    else QTimer::singleShot(0, t->view, &ChartView::fitAll);  // after layout gives the view its size
+    if (blank) removeTab(blank);
+    updateTabText(t);
     updateTitle();
     return true;
 }
 
-void MainWindow::goHome() {
-    if (!maybeSave()) return;
-    m_scene->fromJson({});
-    m_path.clear();
-    removeAutosave();
-    showHome();
-}
-
 void MainWindow::closeEvent(QCloseEvent* e) {
-    if (!maybeSave()) return e->ignore();
-    removeAutosave();
+    for (int i = 0; i < m_tabs->count(); ++i) {
+        if (tab(i)->scene->undoStack()->isClean()) continue;
+        m_tabs->setCurrentIndex(i);  // show the chart the save question is about
+        if (!maybeSave(tab(i))) return e->ignore();
+    }
+    for (int i = 0; i < m_tabs->count(); ++i) removeRecovery(tab(i));
     e->accept();
 }
 
 void MainWindow::updateTitle() {
-    if (!onChart()) {
+    ChartTab* t = onChart() ? cur() : nullptr;
+    if (!t) {
         setWindowTitle(tr("Flowchart"));
         setWindowModified(false);
         return;
     }
-    const QString name = m_path.isEmpty() ? tr("Untitled") : QFileInfo(m_path).completeBaseName();
+    const QString name = t->path.isEmpty() ? tr("Untitled") : QFileInfo(t->path).completeBaseName();
     setWindowTitle(tr("%1[*] — Flowchart").arg(name));
-    setWindowModified(!m_scene->undoStack()->isClean());
+    setWindowModified(!t->scene->undoStack()->isClean());
 }
 
 // ---------------------------------------------------------------- saving
 
-bool MainWindow::maybeSave() {
-    if (!onChart() || m_scene->undoStack()->isClean()) return true;
-    const QString name = m_path.isEmpty() ? tr("Untitled") : QFileInfo(m_path).fileName();
+bool MainWindow::maybeSave(ChartTab* t) {
+    if (!t || t->scene->undoStack()->isClean()) return true;
+    const QString name = t->path.isEmpty() ? tr("Untitled") : QFileInfo(t->path).fileName();
     const auto r = QMessageBox::warning(this, tr("Unsaved changes"), tr("Save changes to \"%1\"?").arg(name),
                                         QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel, QMessageBox::Save);
-    if (r == QMessageBox::Save) return save();
+    if (r == QMessageBox::Save) return save(t);
     return r == QMessageBox::Discard;
 }
 
-bool MainWindow::save() { return m_path.isEmpty() ? saveAs() : writeFile(m_path); }
+bool MainWindow::save(ChartTab* t) {
+    if (!t) return false;
+    return t->path.isEmpty() ? saveAs(t) : writeFile(t, t->path);
+}
 
-bool MainWindow::saveAs() {
-    const QString start = m_path.isEmpty()
+bool MainWindow::saveAs(ChartTab* t) {
+    if (!t) return false;
+    const QString start = t->path.isEmpty()
                               ? QDir(QSettings().value("lastDir", QDir::homePath()).toString()).filePath(tr("Untitled.flowx"))
-                              : m_path;
+                              : t->path;
     QString path = QFileDialog::getSaveFileName(this, tr("Save chart"), start, kFilter);
     if (path.isEmpty()) return false;
     if (!path.endsWith(".flowx", Qt::CaseInsensitive)) path += ".flowx";
-    return writeFile(path);
+    return writeFile(t, path);
 }
 
-bool MainWindow::writeFile(const QString& path) {
-    QJsonObject o = m_scene->toJson();
-    o["view"] = m_view->viewState();
-    o["thumb"] = QString::fromLatin1(thumbnailPng().toBase64());
+bool MainWindow::writeFile(ChartTab* t, const QString& path) {
+    QJsonObject o = t->scene->toJson();
+    o["view"] = t->view->viewState();
+    o["thumb"] = QString::fromLatin1(thumbnailPng(t->scene).toBase64());
     QSaveFile f(path);  // writes to a temp file and renames, so a crash never leaves half a file
     if (!f.open(QIODevice::WriteOnly) || f.write(QJsonDocument(o).toJson()) < 0 || !f.commit()) {
         QMessageBox::warning(this, tr("Save failed"), tr("Cannot save %1:\n%2").arg(QDir::toNativeSeparators(path), f.errorString()));
         return false;
     }
-    m_path = QFileInfo(path).absoluteFilePath();
-    QSettings().setValue("lastDir", QFileInfo(m_path).absolutePath());
-    m_scene->undoStack()->setClean();
-    removeAutosave();
-    HomeScreen::addRecent(m_path);
-    updateTitle();
+    t->path = QFileInfo(path).absoluteFilePath();
+    QSettings().setValue("lastDir", QFileInfo(t->path).absolutePath());
+    t->scene->undoStack()->setClean();
+    removeRecovery(t);
+    HomeScreen::addRecent(t->path);
+    updateTabText(t);
+    if (t == cur()) updateTitle();
     return true;
 }
 
-QByteArray MainWindow::thumbnailPng() {
+QByteArray MainWindow::thumbnailPng(ChartScene* s) {
     QImage img(320, 200, QImage::Format_ARGB32_Premultiplied);
     img.fill(Qt::white);
-    const QRectF r = m_scene->contentRect();
+    const QRectF r = s->contentRect();
     if (!r.isNull()) {
-        OverlaysHidden guard(m_scene);
+        OverlaysHidden guard(s);
         QPainter p(&img);
         p.setRenderHints(QPainter::Antialiasing | QPainter::TextAntialiasing);
-        m_scene->render(&p, QRectF(8, 8, 304, 184), r, Qt::KeepAspectRatio);
+        s->render(&p, QRectF(8, 8, 304, 184), r, Qt::KeepAspectRatio);
     }
     QByteArray bytes;
     QBuffer buf(&bytes);
@@ -489,46 +649,62 @@ QByteArray MainWindow::thumbnailPng() {
     return bytes;
 }
 
-// ponytail: one autosave slot. Two app instances editing at once share it; give each instance
-// its own file plus a lock if that becomes a real workflow.
-QString MainWindow::autosavePath() const {
-    return QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + "/autosave.flowx";
+// Recovery copies live here as autosave*.flowx: one per tab with unsaved work that has no file
+// (or whose file could not be written). Any left at startup mean the app did not close normally.
+// ponytail: two app instances running at once each see the other's live copies as left over.
+// Add a lock file per instance if that becomes a real workflow.
+QString MainWindow::autosaveDir() const { return QStandardPaths::writableLocation(QStandardPaths::AppDataLocation); }
+
+void MainWindow::removeRecovery(ChartTab* t) {
+    if (t->recovery.isEmpty()) return;
+    QFile::remove(t->recovery);
+    t->recovery.clear();
 }
 
-void MainWindow::removeAutosave() { QFile::remove(autosavePath()); }
-
 void MainWindow::autosave() {
-    if (!onChart() || m_scene->undoStack()->isClean()) return;
-    if (!m_path.isEmpty() && writeFile(m_path)) return;  // saved chart: write the file itself
-    // Untitled (or the write failed): keep a recovery copy instead.
-    QJsonObject o = m_scene->toJson();
-    o["view"] = m_view->viewState();
-    o["origPath"] = m_path;
-    QDir().mkpath(QFileInfo(autosavePath()).absolutePath());
-    QSaveFile f(autosavePath());
-    if (f.open(QIODevice::WriteOnly)) {
-        f.write(QJsonDocument(o).toJson(QJsonDocument::Compact));
-        f.commit();
+    for (int i = 0; i < m_tabs->count(); ++i) {
+        ChartTab* t = tab(i);
+        if (t->scene->undoStack()->isClean()) continue;
+        if (!t->path.isEmpty() && writeFile(t, t->path)) continue;  // saved chart: write the file itself
+        // Untitled (or the write failed): keep a recovery copy instead.
+        QJsonObject o = t->scene->toJson();
+        o["view"] = t->view->viewState();
+        o["origPath"] = t->path;
+        QDir().mkpath(autosaveDir());
+        if (t->recovery.isEmpty())
+            t->recovery = autosaveDir() + "/autosave-" + QUuid::createUuid().toString(QUuid::Id128).left(12) + ".flowx";
+        QSaveFile f(t->recovery);
+        if (f.open(QIODevice::WriteOnly)) {
+            f.write(QJsonDocument(o).toJson(QJsonDocument::Compact));
+            f.commit();
+        }
     }
 }
 
 void MainWindow::start(const QString& fileArg) {
-    QFile f(autosavePath());
-    if (f.exists()) {
+    const QFileInfoList left =
+        QDir(autosaveDir()).entryInfoList({"autosave*.flowx"}, QDir::Files, QDir::Time | QDir::Reversed);
+    if (!left.isEmpty()) {
         const auto answer = QMessageBox::question(
-            this, tr("Recover chart"), tr("Flowchart did not close normally last time.\nRecover the unsaved chart?"));
-        if (answer == QMessageBox::Yes && f.open(QIODevice::ReadOnly)) {
-            const QJsonObject o = QJsonDocument::fromJson(f.readAll()).object();
-            f.close();
-            showChart();
-            m_scene->fromJson(o);
-            m_path = o["origPath"].toString();
-            m_view->setViewState(o["view"].toObject());
-            m_scene->undoStack()->resetClean();  // recovered work counts as unsaved
-            updateTitle();
-            return;
+            this, tr("Recover charts"),
+            tr("Flowchart did not close normally last time.\nRecover the unsaved chart(s)? (%1)").arg(left.size()));
+        for (const QFileInfo& fi : left) {
+            QFile f(fi.absoluteFilePath());
+            if (answer == QMessageBox::Yes && f.open(QIODevice::ReadOnly)) {
+                const QJsonObject o = QJsonDocument::fromJson(f.readAll()).object();
+                f.close();
+                ChartTab* t = addTab();
+                t->scene->fromJson(o);
+                t->path = o["origPath"].toString();
+                t->recovery = fi.absoluteFilePath();  // kept until this tab is saved or closed
+                t->view->setViewState(o["view"].toObject());
+                t->scene->undoStack()->resetClean();  // recovered work counts as unsaved
+                updateTabText(t);
+            } else {
+                f.remove();
+            }
         }
-        removeAutosave();
+        updateTitle();
     }
     if (!fileArg.isEmpty()) openFile(fileArg);
 }
@@ -536,16 +712,17 @@ void MainWindow::start(const QString& fileArg) {
 // ---------------------------------------------------------------- export & clipboard
 
 void MainWindow::exportChart(bool forLlm) {
-    const QRectF r = m_scene->contentRect();
+    if (!cur()) return;
+    const QRectF r = scene()->contentRect();
     if (r.isNull()) {
         QMessageBox::information(this, tr("Export"), tr("The chart is empty."));
         return;
     }
-    const QString base = m_path.isEmpty() ? tr("Untitled") : QFileInfo(m_path).completeBaseName();
+    const QString base = cur()->path.isEmpty() ? tr("Untitled") : QFileInfo(cur()->path).completeBaseName();
     // Each chart remembers where it was last exported (keyed by its file path; "" for untitled).
     QVariantMap exportDirs = QSettings().value("exportDirs").toMap();
-    const QString dir = exportDirs.value(m_path, m_path.isEmpty() ? QSettings().value("lastDir", QDir::homePath()).toString()
-                                                                  : QFileInfo(m_path).absolutePath()).toString();
+    const QString dir = exportDirs.value(cur()->path, cur()->path.isEmpty() ? QSettings().value("lastDir", QDir::homePath()).toString()
+                                                                  : QFileInfo(cur()->path).absolutePath()).toString();
     QString filter;
     const QStringList exts = forLlm ? QStringList{"md", "txt"} : QStringList{"png", "svg", "pdf"};
     const QString filters = forLlm ? tr("Markdown for LLM (*.md);;Plain text for LLM (*.txt)")
@@ -560,14 +737,15 @@ void MainWindow::exportChart(bool forLlm) {
         path += "." + ext;
     }
 
-    exportDirs[m_path] = QFileInfo(path).absolutePath();
+    exportDirs[cur()->path] = QFileInfo(path).absolutePath();
     QSettings().setValue("exportDirs", exportDirs);
-    const bool ok = m_scene->exportTo(path);
-    if (!ok)QMessageBox::warning(this, tr("Export failed"), tr("Cannot write %1.").arg(QDir::toNativeSeparators(path)));
+    const bool ok = scene()->exportTo(path);
+    if (!ok) QMessageBox::warning(this, tr("Export failed"), tr("Cannot write %1.").arg(QDir::toNativeSeparators(path)));
 }
 
 void MainWindow::copy() {
-    const QJsonObject clip = m_scene->copySelection();
+    if (!cur()) return;
+    const QJsonObject clip = scene()->copySelection();
     if (clip["nodes"].toArray().isEmpty()) return;
     auto* md = new QMimeData;
     md->setData(kClipMime, QJsonDocument(clip).toJson(QJsonDocument::Compact));
@@ -577,21 +755,21 @@ void MainWindow::copy() {
 
 void MainWindow::paste() {
     const QMimeData* md = QGuiApplication::clipboard()->mimeData();
-    if (!md || !md->hasFormat(kClipMime)) return;
+    if (!md || !md->hasFormat(kClipMime) || !cur()) return;
     const QJsonObject clip = QJsonDocument::fromJson(md->data(kClipMime)).object();
     // Center the pasted shapes on the mouse when it is over the chart; else step off the source.
-    const QPoint mouse = m_view->viewport()->mapFromGlobal(QCursor::pos());
-    if (m_view->viewport()->rect().contains(mouse)) {
+    const QPoint mouse = view()->viewport()->mapFromGlobal(QCursor::pos());
+    if (view()->viewport()->rect().contains(mouse)) {
         QRectF box;
         for (const auto& v : clip["nodes"].toArray()) {
             const QJsonObject n = v.toObject();
             const double w = n["w"].toDouble(), h = n["h"].toDouble();
             box |= QRectF(n["x"].toDouble() - w / 2, n["y"].toDouble() - h / 2, w, h);
         }
-        return m_scene->paste(clip, m_scene->snap(m_view->mapToScene(mouse) - box.center()));
+        return scene()->paste(clip, scene()->snap(view()->mapToScene(mouse) - box.center()));
     }
     ++m_pasteCount;
-    m_scene->paste(clip, QPointF(20, 20) * m_pasteCount);
+    scene()->paste(clip, QPointF(20, 20) * m_pasteCount);
 }
 
 // ---------------------------------------------------------------- theme
@@ -600,7 +778,8 @@ void MainWindow::applyTheme(bool dark) {
     // Override the Windows light/dark setting; Fusion then picks the matching palette.
     QGuiApplication::styleHints()->setColorScheme(dark ? Qt::ColorScheme::Dark : Qt::ColorScheme::Light);
     QApplication::setPalette(QApplication::style()->standardPalette());
-    m_view->setDark(dark);
+    m_dark = dark;
+    for (int i = 0; i < m_tabs->count(); ++i) tab(i)->view->setDark(dark);
     m_palette->rebuildIcons(QApplication::palette().color(QPalette::Text));
     QSettings().setValue("dark", dark);
     if (!onChart()) m_home->refresh();
