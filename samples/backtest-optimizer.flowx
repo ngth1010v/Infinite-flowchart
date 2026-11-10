@@ -1,0 +1,981 @@
+{
+ "format": "flowx",
+ "version": 1,
+ "nodes": [
+  {
+   "id": 1,
+   "shape": "vcontainer",
+   "x": 1150.0,
+   "y": 1120.0,
+   "w": 900,
+   "h": 1480,
+   "text": "User state",
+   "style": {
+    "stroke": "#ff3a414a",
+    "strokeWidth": 2,
+    "fontSize": 14,
+    "bold": true
+   }
+  },
+  {
+   "id": 2,
+   "shape": "vcontainer",
+   "x": 3130.0,
+   "y": 1120.0,
+   "w": 3060,
+   "h": 1480,
+   "text": "Engine state",
+   "style": {
+    "stroke": "#ff3a414a",
+    "strokeWidth": 2,
+    "fontSize": 14,
+    "bold": true
+   }
+  },
+  {
+   "id": 3,
+   "shape": "io",
+   "x": 850.0,
+   "y": 520.0,
+   "w": 220,
+   "h": 120,
+   "text": "Symbol",
+   "style": {
+    "stroke": "#ff3a414a",
+    "strokeWidth": 2,
+    "fontSize": 14
+   }
+  },
+  {
+   "id": 4,
+   "shape": "io",
+   "x": 850.0,
+   "y": 660.0,
+   "w": 220,
+   "h": 120,
+   "text": "Time range",
+   "style": {
+    "stroke": "#ff3a414a",
+    "strokeWidth": 2,
+    "fontSize": 14
+   }
+  },
+  {
+   "id": 5,
+   "shape": "io",
+   "x": 850.0,
+   "y": 800.0,
+   "w": 220,
+   "h": 120,
+   "text": "Train / test split",
+   "style": {
+    "stroke": "#ff3a414a",
+    "strokeWidth": 2,
+    "fontSize": 14
+   }
+  },
+  {
+   "id": 6,
+   "shape": "io",
+   "x": 864.77,
+   "y": 980.0,
+   "w": 249.53,
+   "h": 120,
+   "text": "Choose strategy",
+   "style": {
+    "stroke": "#ff3a414a",
+    "strokeWidth": 2,
+    "fontSize": 14
+   }
+  },
+  {
+   "id": 7,
+   "shape": "io",
+   "x": 850.0,
+   "y": 1160.0,
+   "w": 220,
+   "h": 120,
+   "text": "Grid parameter options",
+   "style": {
+    "stroke": "#ff3a414a",
+    "strokeWidth": 2,
+    "fontSize": 14
+   }
+  },
+  {
+   "id": 8,
+   "shape": "io",
+   "x": 850.0,
+   "y": 1360.0,
+   "w": 220,
+   "h": 120,
+   "text": "Risk manager",
+   "style": {
+    "stroke": "#ff3a414a",
+    "strokeWidth": 2,
+    "fontSize": 14
+   }
+  },
+  {
+   "id": 9,
+   "shape": "io",
+   "x": 1155.5,
+   "y": 1333.16,
+   "w": 260,
+   "h": 60,
+   "text": "Set account size",
+   "style": {
+    "stroke": "#ff3a414a",
+    "strokeWidth": 2,
+    "fontSize": 14
+   }
+  },
+  {
+   "id": 10,
+   "shape": "io",
+   "x": 1155.5,
+   "y": 1413.16,
+   "w": 260,
+   "h": 60,
+   "text": "Set Max DD (%)",
+   "style": {
+    "stroke": "#ff3a414a",
+    "strokeWidth": 2,
+    "fontSize": 14
+   }
+  },
+  {
+   "id": 11,
+   "shape": "io",
+   "x": 850.0,
+   "y": 1600.0,
+   "w": 220,
+   "h": 120,
+   "text": "Minimum Filter",
+   "style": {
+    "stroke": "#ff3a414a",
+    "strokeWidth": 2,
+    "fontSize": 14
+   }
+  },
+  {
+   "id": 12,
+   "shape": "io",
+   "x": 1130.0,
+   "y": 1570.0,
+   "w": 260,
+   "h": 60,
+   "text": "Min trades",
+   "style": {
+    "stroke": "#ff3a414a",
+    "strokeWidth": 2,
+    "fontSize": 14
+   }
+  },
+  {
+   "id": 13,
+   "shape": "io",
+   "x": 1130.0,
+   "y": 1650.0,
+   "w": 260,
+   "h": 60,
+   "text": "Rolling minimum filter",
+   "style": {
+    "stroke": "#ff3a414a",
+    "strokeWidth": 2,
+    "fontSize": 14
+   }
+  },
+  {
+   "id": 14,
+   "shape": "io",
+   "x": 1460.0,
+   "y": 1650.0,
+   "w": 240,
+   "h": 60,
+   "text": "Rolling len",
+   "style": {
+    "stroke": "#ff3a414a",
+    "strokeWidth": 2,
+    "fontSize": 14
+   }
+  },
+  {
+   "id": 15,
+   "shape": "io",
+   "x": 1460.0,
+   "y": 1725.42,
+   "w": 240,
+   "h": 60,
+   "text": "Rolling min trades",
+   "style": {
+    "stroke": "#ff3a414a",
+    "strokeWidth": 2,
+    "fontSize": 14
+   }
+  },
+  {
+   "id": 16,
+   "shape": "io",
+   "x": 1460.0,
+   "y": 1800.85,
+   "w": 240,
+   "h": 60,
+   "text": "Rolling min profits",
+   "style": {
+    "stroke": "#ff3a414a",
+    "strokeWidth": 2,
+    "fontSize": 14
+   }
+  },
+  {
+   "id": 17,
+   "shape": "process",
+   "x": 1720.0,
+   "y": 520.0,
+   "w": 160,
+   "h": 120,
+   "text": "Get all ohlc data",
+   "style": {
+    "stroke": "#ff3a414a",
+    "strokeWidth": 2,
+    "fontSize": 14
+   }
+  },
+  {
+   "id": 18,
+   "shape": "process",
+   "x": 1940.0,
+   "y": 640.0,
+   "w": 160,
+   "h": 120,
+   "text": "Split to Train and Test",
+   "style": {
+    "stroke": "#ff3a414a",
+    "strokeWidth": 2,
+    "fontSize": 14
+   }
+  },
+  {
+   "id": 19,
+   "shape": "io",
+   "x": 2170.0,
+   "y": 560.0,
+   "w": 180,
+   "h": 80,
+   "text": "Test data",
+   "style": {
+    "stroke": "#ff3a414a",
+    "strokeWidth": 2,
+    "fontSize": 14
+   }
+  },
+  {
+   "id": 20,
+   "shape": "io",
+   "x": 2170.0,
+   "y": 720.0,
+   "w": 180,
+   "h": 80,
+   "text": "Train data",
+   "style": {
+    "stroke": "#ff3a414a",
+    "strokeWidth": 2,
+    "fontSize": 14
+   }
+  },
+  {
+   "id": 21,
+   "shape": "process",
+   "x": 1770.0,
+   "y": 900.0,
+   "w": 260,
+   "h": 120,
+   "text": "Load strategy",
+   "style": {
+    "stroke": "#ff3a414a",
+    "strokeWidth": 2,
+    "fontSize": 14
+   }
+  },
+  {
+   "id": 22,
+   "shape": "process",
+   "x": 1770.0,
+   "y": 1160.0,
+   "w": 260,
+   "h": 120,
+   "text": "Build list parameters combination",
+   "style": {
+    "stroke": "#ff3a414a",
+    "strokeWidth": 2,
+    "fontSize": 14
+   }
+  },
+  {
+   "id": 23,
+   "shape": "process",
+   "x": 2170.0,
+   "y": 1040.0,
+   "w": 270,
+   "h": 120,
+   "text": "Run strategy with \nlot = 1\nsave basic trades info",
+   "style": {
+    "stroke": "#ff3a414a",
+    "strokeWidth": 2,
+    "fontSize": 14
+   }
+  },
+  {
+   "id": 24,
+   "shape": "document",
+   "x": 2616.94,
+   "y": 745.0,
+   "w": 540,
+   "h": 130,
+   "text": "Trade info include:\nProfit/loss (with cost, with spread)\nMin/max price reached (for live equity analysis)",
+   "style": {
+    "stroke": "#ff3a414a",
+    "strokeWidth": 2,
+    "fontSize": 14
+   }
+  },
+  {
+   "id": 25,
+   "shape": "io",
+   "x": 2636.94,
+   "y": 976.84,
+   "w": 540,
+   "h": 133.69,
+   "text": "N combination tables with 2 dim numpy\n(trades, trade_info)",
+   "style": {
+    "stroke": "#ff3a414a",
+    "strokeWidth": 2,
+    "fontSize": 14
+   }
+  },
+  {
+   "id": 26,
+   "shape": "process",
+   "x": 2676.94,
+   "y": 1146.84,
+   "w": 340,
+   "h": 120,
+   "text": "Recalculate the loss/profit of each trade for fit with the MaxDD",
+   "style": {
+    "stroke": "#ff3a414a",
+    "strokeWidth": 2,
+    "fontSize": 14
+   }
+  },
+  {
+   "id": 27,
+   "shape": "process",
+   "x": 2886.94,
+   "y": 1300.0,
+   "w": 280,
+   "h": 140,
+   "text": "Recalc / Filter for fit with min lot rule in MT5",
+   "style": {
+    "stroke": "#ff3a414a",
+    "strokeWidth": 2,
+    "fontSize": 14
+   }
+  },
+  {
+   "id": 28,
+   "shape": "process",
+   "x": 3036.94,
+   "y": 1455.22,
+   "w": 220,
+   "h": 109.97,
+   "text": "Filter combination by min trades",
+   "style": {
+    "stroke": "#ff3a414a",
+    "strokeWidth": 2,
+    "fontSize": 14
+   }
+  },
+  {
+   "id": 29,
+   "shape": "process",
+   "x": 3216.94,
+   "y": 1595.42,
+   "w": 260,
+   "h": 109.97,
+   "text": "Filter combination by time rolling window",
+   "style": {
+    "stroke": "#ff3a414a",
+    "strokeWidth": 2,
+    "fontSize": 14
+   }
+  },
+  {
+   "id": 30,
+   "shape": "process",
+   "x": 3601.53,
+   "y": 1592.7,
+   "w": 243.06,
+   "h": 115.42,
+   "text": "Run passed combination with Test data",
+   "style": {
+    "stroke": "#ff3a414a",
+    "strokeWidth": 2,
+    "fontSize": 14
+   }
+  },
+  {
+   "id": 31,
+   "shape": "process",
+   "x": 3781.53,
+   "y": 1760.0,
+   "w": 243.06,
+   "h": 160,
+   "text": "Judge each combination with test result by time rolling window",
+   "style": {
+    "stroke": "#ff3a414a",
+    "strokeWidth": 2,
+    "fontSize": 14
+   }
+  },
+  {
+   "id": 32,
+   "shape": "io",
+   "x": 4160.0,
+   "y": 1430.0,
+   "w": 320,
+   "h": 120,
+   "text": "Train-passed combination",
+   "style": {
+    "stroke": "#ff3a414a",
+    "strokeWidth": 2,
+    "fontSize": 14
+   }
+  },
+  {
+   "id": 33,
+   "shape": "io",
+   "x": 4160.0,
+   "y": 1620.0,
+   "w": 320,
+   "h": 120,
+   "text": "Test result of each combination\n(only pass or not)",
+   "style": {
+    "stroke": "#ff3a414a",
+    "strokeWidth": 2,
+    "fontSize": 14
+   }
+  },
+  {
+   "id": 34,
+   "shape": "process",
+   "x": 4540.0,
+   "y": 1540.0,
+   "w": 160,
+   "h": 120,
+   "text": "Export result",
+   "style": {
+    "stroke": "#ff3a414a",
+    "strokeWidth": 2,
+    "fontSize": 14
+   }
+  },
+  {
+   "id": 35,
+   "shape": "process",
+   "x": 493.77,
+   "y": 1382.57,
+   "w": 227.54,
+   "h": 125.15,
+   "text": "Delete the ML optimaze\nDelete the random mode",
+   "style": {
+    "stroke": "#ff3a414a",
+    "strokeWidth": 0,
+    "fontSize": 14,
+    "fill": "#ffffe342"
+   }
+  }
+ ],
+ "links": [
+  {
+   "id": 36,
+   "from": 17,
+   "fromPort": "right",
+   "to": 18,
+   "toPort": "left",
+   "text": "",
+   "style": {
+    "stroke": "#ff3a414a",
+    "strokeWidth": 1.5
+   }
+  },
+  {
+   "id": 37,
+   "from": 27,
+   "fromPort": "bottom",
+   "to": 28,
+   "toPort": "left",
+   "text": "",
+   "style": {
+    "stroke": "#ff3a414a",
+    "strokeWidth": 1.5
+   }
+  },
+  {
+   "id": 38,
+   "from": 31,
+   "fromPort": "right",
+   "to": 33,
+   "toPort": "left",
+   "text": "",
+   "style": {
+    "stroke": "#ff3a414a",
+    "strokeWidth": 1.5
+   }
+  },
+  {
+   "id": 39,
+   "from": 4,
+   "fromPort": "right",
+   "to": 17,
+   "toPort": "left",
+   "text": "",
+   "style": {
+    "stroke": "#ff3a414a",
+    "strokeWidth": 1.5
+   }
+  },
+  {
+   "id": 40,
+   "from": 13,
+   "fromPort": "right",
+   "to": 16,
+   "toPort": "left",
+   "text": "",
+   "style": {
+    "stroke": "#ff3a414a",
+    "strokeWidth": 1.5
+   }
+  },
+  {
+   "id": 41,
+   "from": 29,
+   "fromPort": "right",
+   "to": 30,
+   "toPort": "left",
+   "text": "",
+   "style": {
+    "stroke": "#ff3a414a",
+    "strokeWidth": 1.5
+   }
+  },
+  {
+   "id": 42,
+   "from": 16,
+   "fromPort": "right",
+   "to": 31,
+   "toPort": "left",
+   "text": "",
+   "style": {
+    "stroke": "#ff3a414a",
+    "strokeWidth": 1.5
+   }
+  },
+  {
+   "id": 43,
+   "from": 24,
+   "fromPort": "bottom",
+   "to": 25,
+   "toPort": "top",
+   "text": "",
+   "style": {
+    "stroke": "#ff3a414a",
+    "strokeWidth": 1.5
+   }
+  },
+  {
+   "id": 44,
+   "from": 21,
+   "fromPort": "right",
+   "to": 23,
+   "toPort": "left",
+   "text": "",
+   "style": {
+    "stroke": "#ff3a414a",
+    "strokeWidth": 1.5
+   }
+  },
+  {
+   "id": 45,
+   "from": 20,
+   "fromPort": "bottom",
+   "to": 23,
+   "toPort": "top",
+   "text": "",
+   "style": {
+    "stroke": "#ff3a414a",
+    "strokeWidth": 1.5
+   }
+  },
+  {
+   "id": 46,
+   "from": 29,
+   "fromPort": "right",
+   "to": 32,
+   "toPort": "left",
+   "text": "",
+   "style": {
+    "stroke": "#ff3a414a",
+    "strokeWidth": 1.5
+   }
+  },
+  {
+   "id": 47,
+   "from": 11,
+   "fromPort": "right",
+   "to": 12,
+   "toPort": "left",
+   "text": "",
+   "style": {
+    "stroke": "#ff3a414a",
+    "strokeWidth": 1.5
+   }
+  },
+  {
+   "id": 48,
+   "from": 6,
+   "fromPort": "right",
+   "to": 21,
+   "toPort": "left",
+   "text": "",
+   "style": {
+    "stroke": "#ff3a414a",
+    "strokeWidth": 1.5
+   }
+  },
+  {
+   "id": 49,
+   "from": 23,
+   "fromPort": "right",
+   "to": 25,
+   "toPort": "left",
+   "text": "",
+   "style": {
+    "stroke": "#ff3a414a",
+    "strokeWidth": 1.5
+   }
+  },
+  {
+   "id": 50,
+   "from": 19,
+   "fromPort": "right",
+   "to": 30,
+   "toPort": "top",
+   "text": "",
+   "style": {
+    "stroke": "#ff3a414a",
+    "strokeWidth": 1.5
+   }
+  },
+  {
+   "id": 51,
+   "from": 16,
+   "fromPort": "right",
+   "to": 29,
+   "toPort": "left",
+   "text": "",
+   "style": {
+    "stroke": "#ff3a414a",
+    "strokeWidth": 1.5
+   }
+  },
+  {
+   "id": 52,
+   "from": 13,
+   "fromPort": "right",
+   "to": 15,
+   "toPort": "left",
+   "text": "",
+   "style": {
+    "stroke": "#ff3a414a",
+    "strokeWidth": 1.5
+   }
+  },
+  {
+   "id": 53,
+   "from": 3,
+   "fromPort": "right",
+   "to": 17,
+   "toPort": "left",
+   "text": "",
+   "style": {
+    "stroke": "#ff3a414a",
+    "strokeWidth": 1.5
+   }
+  },
+  {
+   "id": 54,
+   "from": 15,
+   "fromPort": "right",
+   "to": 29,
+   "toPort": "left",
+   "text": "",
+   "style": {
+    "stroke": "#ff3a414a",
+    "strokeWidth": 1.5
+   }
+  },
+  {
+   "id": 55,
+   "from": 33,
+   "fromPort": "right",
+   "to": 34,
+   "toPort": "left",
+   "text": "",
+   "style": {
+    "stroke": "#ff3a414a",
+    "strokeWidth": 1.5
+   }
+  },
+  {
+   "id": 56,
+   "from": 14,
+   "fromPort": "right",
+   "to": 29,
+   "toPort": "left",
+   "text": "",
+   "style": {
+    "stroke": "#ff3a414a",
+    "strokeWidth": 1.5
+   }
+  },
+  {
+   "id": 57,
+   "from": 7,
+   "fromPort": "right",
+   "to": 22,
+   "toPort": "left",
+   "text": "",
+   "style": {
+    "stroke": "#ff3a414a",
+    "strokeWidth": 1.5
+   }
+  },
+  {
+   "id": 58,
+   "from": 14,
+   "fromPort": "right",
+   "to": 31,
+   "toPort": "left",
+   "text": "",
+   "style": {
+    "stroke": "#ff3a414a",
+    "strokeWidth": 1.5
+   }
+  },
+  {
+   "id": 59,
+   "from": 26,
+   "fromPort": "bottom",
+   "to": 27,
+   "toPort": "left",
+   "text": "",
+   "style": {
+    "stroke": "#ff3a414a",
+    "strokeWidth": 1.5
+   }
+  },
+  {
+   "id": 60,
+   "from": 8,
+   "fromPort": "right",
+   "to": 10,
+   "toPort": "left",
+   "text": "",
+   "style": {
+    "stroke": "#ff3a414a",
+    "strokeWidth": 1.5
+   }
+  },
+  {
+   "id": 61,
+   "from": 15,
+   "fromPort": "right",
+   "to": 31,
+   "toPort": "left",
+   "text": "",
+   "style": {
+    "stroke": "#ff3a414a",
+    "strokeWidth": 1.5
+   }
+  },
+  {
+   "id": 62,
+   "from": 18,
+   "fromPort": "right",
+   "to": 19,
+   "toPort": "left",
+   "text": "",
+   "style": {
+    "stroke": "#ff3a414a",
+    "strokeWidth": 1.5
+   }
+  },
+  {
+   "id": 63,
+   "from": 25,
+   "fromPort": "bottom",
+   "to": 26,
+   "toPort": "top",
+   "text": "",
+   "style": {
+    "stroke": "#ff3a414a",
+    "strokeWidth": 1.5
+   }
+  },
+  {
+   "id": 64,
+   "from": 5,
+   "fromPort": "right",
+   "to": 18,
+   "toPort": "left",
+   "text": "",
+   "style": {
+    "stroke": "#ff3a414a",
+    "strokeWidth": 1.5
+   }
+  },
+  {
+   "id": 65,
+   "from": 13,
+   "fromPort": "right",
+   "to": 14,
+   "toPort": "left",
+   "text": "",
+   "style": {
+    "stroke": "#ff3a414a",
+    "strokeWidth": 1.5
+   }
+  },
+  {
+   "id": 66,
+   "from": 18,
+   "fromPort": "right",
+   "to": 20,
+   "toPort": "left",
+   "text": "",
+   "style": {
+    "stroke": "#ff3a414a",
+    "strokeWidth": 1.5
+   }
+  },
+  {
+   "id": 67,
+   "from": 22,
+   "fromPort": "right",
+   "to": 23,
+   "toPort": "left",
+   "text": "",
+   "style": {
+    "stroke": "#ff3a414a",
+    "strokeWidth": 1.5
+   }
+  },
+  {
+   "id": 68,
+   "from": 12,
+   "fromPort": "right",
+   "to": 28,
+   "toPort": "left",
+   "text": "",
+   "style": {
+    "stroke": "#ff3a414a",
+    "strokeWidth": 1.5
+   }
+  },
+  {
+   "id": 69,
+   "from": 11,
+   "fromPort": "right",
+   "to": 13,
+   "toPort": "left",
+   "text": "",
+   "style": {
+    "stroke": "#ff3a414a",
+    "strokeWidth": 1.5
+   }
+  },
+  {
+   "id": 70,
+   "from": 32,
+   "fromPort": "right",
+   "to": 34,
+   "toPort": "left",
+   "text": "",
+   "style": {
+    "stroke": "#ff3a414a",
+    "strokeWidth": 1.5
+   }
+  },
+  {
+   "id": 71,
+   "from": 30,
+   "fromPort": "bottom",
+   "to": 31,
+   "toPort": "left",
+   "text": "",
+   "style": {
+    "stroke": "#ff3a414a",
+    "strokeWidth": 1.5
+   }
+  },
+  {
+   "id": 72,
+   "from": 10,
+   "fromPort": "right",
+   "to": 26,
+   "toPort": "left",
+   "text": "",
+   "style": {
+    "stroke": "#ff3a414a",
+    "strokeWidth": 1.5
+   }
+  },
+  {
+   "id": 73,
+   "from": 28,
+   "fromPort": "bottom",
+   "to": 29,
+   "toPort": "left",
+   "text": "",
+   "style": {
+    "stroke": "#ff3a414a",
+    "strokeWidth": 1.5
+   }
+  },
+  {
+   "id": 74,
+   "from": 9,
+   "fromPort": "right",
+   "to": 26,
+   "toPort": "left",
+   "text": "",
+   "style": {
+    "stroke": "#ff3a414a",
+    "strokeWidth": 1.5
+   }
+  },
+  {
+   "id": 75,
+   "from": 8,
+   "fromPort": "right",
+   "to": 9,
+   "toPort": "left",
+   "text": "",
+   "style": {
+    "stroke": "#ff3a414a",
+    "strokeWidth": 1.5
+   }
+  }
+ ]
+}
