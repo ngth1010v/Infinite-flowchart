@@ -710,7 +710,10 @@ QPointF ChartScene::adjustDrag(NodeItem* n, QPointF pos) {
         setGuides({});
         return pos;
     }
-    pos = snap(pos);
+    // Shift every dragged shape by the grabbed shape's snap, so a group moves as one piece
+    // (snapping each on its own left off-grid shapes out of step, and edited link paths behind).
+    const QPointF grab = m_grabPress + m_dragDelta;
+    pos += snap(grab) - grab;
     if (selectedItems().size() > 1 || mouseGrabberItem() != n) return pos;
 
     const double thr = 6 / viewScale();
@@ -891,11 +894,13 @@ void withGripOnTop(const ChartScene* scene, QPointF pos, F route) {
 }  // namespace
 
 void ChartScene::mouseMoveEvent(QGraphicsSceneMouseEvent* e) {
+    m_dragDelta = e->scenePos() - e->buttonDownScenePos(Qt::LeftButton);
     withGripOnTop(this, e->scenePos(), [&] { QGraphicsScene::mouseMoveEvent(e); });
 }
 
 void ChartScene::mousePressEvent(QGraphicsSceneMouseEvent* e) {
     withGripOnTop(this, e->scenePos(), [&] { QGraphicsScene::mousePressEvent(e); });
+    m_grabPress = mouseGrabberItem() ? mouseGrabberItem()->pos() : QPointF();
     m_pressIds.clear();
     m_riders.clear();
     QSet<NodeItem*> moving;

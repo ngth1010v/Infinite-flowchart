@@ -7,6 +7,7 @@
 #include <QBuffer>
 #include <QClipboard>
 #include <QCloseEvent>
+#include <QCursor>
 #include <QDir>
 #include <QFileDialog>
 #include <QFileInfo>
@@ -577,8 +578,20 @@ void MainWindow::copy() {
 void MainWindow::paste() {
     const QMimeData* md = QGuiApplication::clipboard()->mimeData();
     if (!md || !md->hasFormat(kClipMime)) return;
+    const QJsonObject clip = QJsonDocument::fromJson(md->data(kClipMime)).object();
+    // Center the pasted shapes on the mouse when it is over the chart; else step off the source.
+    const QPoint mouse = m_view->viewport()->mapFromGlobal(QCursor::pos());
+    if (m_view->viewport()->rect().contains(mouse)) {
+        QRectF box;
+        for (const auto& v : clip["nodes"].toArray()) {
+            const QJsonObject n = v.toObject();
+            const double w = n["w"].toDouble(), h = n["h"].toDouble();
+            box |= QRectF(n["x"].toDouble() - w / 2, n["y"].toDouble() - h / 2, w, h);
+        }
+        return m_scene->paste(clip, m_scene->snap(m_view->mapToScene(mouse) - box.center()));
+    }
     ++m_pasteCount;
-    m_scene->paste(QJsonDocument::fromJson(md->data(kClipMime)).object(), QPointF(20, 20) * m_pasteCount);
+    m_scene->paste(clip, QPointF(20, 20) * m_pasteCount);
 }
 
 // ---------------------------------------------------------------- theme

@@ -289,6 +289,36 @@ int main(int argc, char** argv) {
         CHECK(s4.copySelection()["nodes"].toArray().size() == 2);
     }
 
+    // Dragging several off-grid shapes moves them as one piece, so an edited link path between
+    // them comes along on the first drag.
+    {
+        ChartScene s5;
+        ChartView v5(&s5);
+        v5.resize(1200, 800);
+        v5.show();
+        CHECK(QTest::qWaitForWindowExposed(&v5));
+        v5.resetView();
+        auto at5 = [&](QPointF s) { return v5.mapFromScene(s); };
+        auto* p = s5.addNode(FlowShape::Process, {0, 0});
+        auto* q = s5.addNode(FlowShape::Process, {300, 200});
+        p->setPos(3, 4), q->setPos(307, 196);  // off the 10px grid, by different amounts
+        s5.beginLinkDrag(p, Port::Right);
+        s5.endLinkDrag(q->portScenePos(Port::Left));
+        auto* l = p->links.first();
+        l->setPath({{93, 4}, {150, 4}, {150, 196}, {217, 196}});
+        s5.clearSelection();
+        p->setSelected(true), q->setSelected(true), l->setSelected(true);
+        const QPolygonF path0 = l->path;
+        const QPointF q0 = q->pos();
+        QTest::mousePress(v5.viewport(), Qt::LeftButton, {}, at5({3, 4}));
+        QTest::mouseMove(v5.viewport(), at5({30, 30}));
+        QTest::mouseMove(v5.viewport(), at5({60, 54}));
+        QTest::mouseRelease(v5.viewport(), Qt::LeftButton, {}, at5({60, 54}));
+        const QPointF d = p->pos() - QPointF(3, 4);
+        CHECK(!d.isNull() && q->pos() - q0 == d);
+        CHECK(l->path == path0.translated(d));
+    }
+
     // Side panels resizing/moving the view must not move the chart on screen.
     {
         QWidget page;

@@ -117,6 +117,7 @@ private:
     int m_selectionSize = 0;
     QList<int> m_pressIds;
     States m_pressState;
+    QPointF m_grabPress, m_dragDelta;  // during a drag: grabbed item's start position, mouse travel
     QHash<NodeItem*, QList<NodeItem*>> m_riders;  // during a drag: container -> shapes it carries
     NodeItem* m_linkSrc = nullptr;
     Port m_linkPort = Port::Bottom;
