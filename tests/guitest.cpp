@@ -470,6 +470,24 @@ int main(int argc, char** argv) {
         CHECK(w.tabCount() == 0 && !w.isVisible());
     }
 
+    // A blank .flowx (0 bytes, a lone UTF-8 BOM, or only whitespace) opens as an empty chart.
+    {
+        QTemporaryDir dir;
+        MainWindow w;
+        w.show();
+        int n = 0;
+        for (const QByteArray& content : {QByteArray(), QByteArray("\xEF\xBB\xBF"), QByteArray(" \r\n")}) {
+            QFile f(dir.filePath(QString("blank%1.flowx").arg(n++)));
+            CHECK(f.open(QIODevice::WriteOnly));
+            f.write(content);
+            f.close();
+            CHECK(w.openFile(f.fileName()) && w.tabCount() == n);
+            const auto views = w.findChildren<ChartView*>();
+            for (auto* v : views)
+                if (v->isVisible()) CHECK(v->chart()->itemCount() == 0);
+        }
+    }
+
     std::printf("OK  gui interactions\n");
     return 0;
 }

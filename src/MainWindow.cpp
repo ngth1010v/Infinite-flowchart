@@ -536,9 +536,13 @@ bool MainWindow::openFile(const QString& path) {
         if (!onChart()) m_home->refresh();
         return false;
     }
-    QJsonParseError err;
-    const QJsonDocument doc = QJsonDocument::fromJson(f.readAll(), &err);
-    const QJsonObject o = doc.object();
+    QByteArray data = f.readAll();
+    if (data.startsWith("\xEF\xBB\xBF")) data.remove(0, 3);  // UTF-8 BOM some editors add
+    QJsonParseError err{};
+    // A blank file (e.g. an empty .txt renamed to .flowx) opens as an empty chart.
+    const bool blankFile = data.trimmed().isEmpty();
+    const QJsonObject o = blankFile ? QJsonObject{{"format", "flowx"}, {"version", 1}}
+                                    : QJsonDocument::fromJson(data, &err).object();
     if (err.error != QJsonParseError::NoError || o["format"].toString() != QLatin1String("flowx")) {
         QMessageBox::warning(this, tr("Cannot open chart"), tr("%1 is not a valid flowchart file.").arg(QDir::toNativeSeparators(path)));
         return false;
