@@ -36,7 +36,7 @@ QPixmap thumbnail(const QString& path, const QPalette& pal) {
         p.drawImage((kThumb.width() - scaled.width()) / 2, (kThumb.height() - scaled.height()) / 2, scaled);
     } else {
         p.setPen(pal.color(QPalette::PlaceholderText));
-        p.drawText(pm.rect(), Qt::AlignCenter, QFile::exists(path) ? QObject::tr("No preview") : QObject::tr("File not found"));
+        p.drawText(pm.rect(), Qt::AlignCenter, QObject::tr("No preview"));
     }
     p.setPen(pal.color(QPalette::Mid));
     p.drawRect(pm.rect().adjusted(0, 0, -1, -1));
@@ -128,9 +128,15 @@ HomeScreen::HomeScreen(QWidget* parent) : QWidget(parent) {
 
 void HomeScreen::refresh() {
     m_recent->clear();
-    for (const QString& path : recentFiles()) {
+    // Files that were moved or deleted drop out of the list for good.
+    const QStringList all = recentFiles();
+    QStringList existing;
+    for (const QString& path : all)
+        if (QFileInfo::exists(path)) existing << path;
+    if (existing.size() != all.size()) QSettings().setValue("recent", existing);
+    for (const QString& path : existing) {
         const QFileInfo fi(path);
-        const QString when = fi.exists() ? fi.lastModified().toString("yyyy-MM-dd hh:mm") : tr("missing");
+        const QString when = fi.lastModified().toString("yyyy-MM-dd hh:mm");
         auto* it = new QListWidgetItem(QIcon(thumbnail(path, palette())), fi.completeBaseName() + "\n" + when);
         it->setData(Qt::UserRole, path);
         it->setToolTip(QDir::toNativeSeparators(path));

@@ -2,7 +2,9 @@
 // resize, inline text edit, snapped move, undo, zoom. Run: guitest.exe (exit code 0 = pass).
 #include "ChartScene.h"
 #include "ChartView.h"
+#include "HomeScreen.h"
 #include "MainWindow.h"
+#include <QSettings>
 #include "Panels.h"
 #include <QFile>
 #include <QJsonDocument>
@@ -29,6 +31,23 @@
 int main(int argc, char** argv) {
     qputenv("QT_QPA_PLATFORM", "offscreen");
     QApplication app(argc, argv);
+
+    // Home screen: recent files that no longer exist are dropped from the list.
+    {
+        QApplication::setOrganizationName("FlowchartTest");
+        QApplication::setApplicationName("FlowchartTest");
+        QTemporaryDir dir;
+        const QString kept = dir.filePath("kept.flowx"), gone = dir.filePath("gone.flowx");
+        QFile f(kept);
+        CHECK(f.open(QIODevice::WriteOnly));
+        f.close();
+        QSettings().setValue("recent", QStringList{gone, kept});
+        HomeScreen home;
+        home.refresh();
+        CHECK(HomeScreen::recentFiles() == QStringList{kept});
+        QSettings().remove("recent");
+    }
+
     ChartScene scene;
     ChartView view(&scene);
     view.resize(1200, 800);
