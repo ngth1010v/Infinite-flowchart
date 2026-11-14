@@ -105,6 +105,16 @@ QRectF ChartScene::contentRect() const {
     return r.isNull() ? r : r.adjusted(-20, -20, 20, 20);
 }
 
+QColor ChartScene::ink(const QColor& c) const {
+    if (!darkCanvas || !c.isValid()) return c;
+    const QColor rgb = c.toRgb();
+    const int hi = std::max({rgb.red(), rgb.green(), rgb.blue()}), lo = std::min({rgb.red(), rgb.green(), rgb.blue()});
+    if (hi - lo > 40) return c;  // has a real hue: keep it
+    float h, s, l, a;
+    rgb.getHslF(&h, &s, &l, &a);
+    return QColor::fromHslF(h, s, 1 - l, a);
+}
+
 bool ChartScene::exportTo(const QString& path) {
     const QRectF r = contentRect();
     if (r.isNull()) return false;
@@ -116,6 +126,8 @@ bool ChartScene::exportTo(const QString& path) {
         return f.commit();
     }
     overlaysHidden = true;
+    const bool dark = darkCanvas;
+    darkCanvas = false;  // exports keep the chart's real colors
     bool ok = true;
     if (ext == "png") {
         // 2x for crisp output, capped so huge charts don't allocate gigabytes.
@@ -145,6 +157,7 @@ bool ChartScene::exportTo(const QString& path) {
         if (ok) render(&p, QRectF(0, 0, pdf.width(), pdf.height()), r);
     }
     overlaysHidden = false;
+    darkCanvas = dark;
     return ok;
 }
 

@@ -44,8 +44,15 @@ const QString kFilter = QObject::tr("Flowchart (*.flowx)");
 // Hide selection/hover decorations while rendering to an image or file.
 struct OverlaysHidden {
     ChartScene* s;
-    explicit OverlaysHidden(ChartScene* scene) : s(scene) { s->overlaysHidden = true; }
-    ~OverlaysHidden() { s->overlaysHidden = false; }
+    bool dark;  // also back to the chart's real colors (light thumbnails)
+    explicit OverlaysHidden(ChartScene* scene) : s(scene), dark(scene->darkCanvas) {
+        s->overlaysHidden = true;
+        s->darkCanvas = false;
+    }
+    ~OverlaysHidden() {
+        s->overlaysHidden = false;
+        s->darkCanvas = dark;
+    }
 };
 
 // Tabs with less room around the name and close button than the style's default.

@@ -181,6 +181,8 @@ void ChartView::setDark(bool dark) {
     m_gridMinor = dark ? QColor(255, 255, 255, 14) : QColor(15, 23, 42, 16);
     m_gridMajor = dark ? QColor(255, 255, 255, 28) : QColor(15, 23, 42, 32);
     chart()->canvasColor = m_bg;
+    chart()->darkCanvas = dark;
+    chart()->update();  // items redraw with the flipped neutral colors
     m_bgCache = QImage();  // holds the old colors
     viewport()->update();
 }

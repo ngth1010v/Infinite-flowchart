@@ -119,7 +119,7 @@ void NodeItem::startEdit() {
     m_editor = ed;
     ed->document()->setDocumentMargin(0);
     ed->setFont(styleFont(style));
-    ed->setDefaultTextColor(style.text);
+    ed->setDefaultTextColor(chart() ? chart()->ink(style.text) : style.text);
     // Containers edit their title in the header band; the horizontal one's title runs bottom-to-top.
     const bool rotated = shapeType == FlowShape::HContainer;
     const QRectF band = textRect();
@@ -294,9 +294,11 @@ bool ChartItem::skipPaint() const {
 void NodeItem::paint(QPainter* p, const QStyleOptionGraphicsItem* opt, QWidget*) {
     if (skipPaint()) return;  // already in the drag layer image
     const double lod = opt->levelOfDetailFromTransform(p->worldTransform());
+    const auto* cs = chart();
+    auto ink = [cs](const QColor& c) { return cs ? cs->ink(c) : c; };
     const QPen pen = style.dash == Qt::NoPen || style.strokeWidth <= 0
                          ? QPen(Qt::NoPen)
-                         : QPen(style.stroke, style.strokeWidth, style.dash, Qt::FlatCap, Qt::MiterJoin);
+                         : QPen(ink(style.stroke), style.strokeWidth, style.dash, Qt::FlatCap, Qt::MiterJoin);
     auto over = [](const QColor& top, const QColor& under) {  // `top` blended onto opaque `under`
         const double a = top.alphaF();
         return QColor::fromRgbF(top.redF() * a + under.redF() * (1 - a), top.greenF() * a + under.greenF() * (1 - a),
@@ -304,8 +306,7 @@ void NodeItem::paint(QPainter* p, const QStyleOptionGraphicsItem* opt, QWidget*)
     };
     // On screen, a see-through container fill is drawn as its color over the canvas, solid: filling
     // big translucent areas costs about 3x more. Exports and the minimap keep the real fill.
-    const auto* cs = chart();
-    QColor fill = style.fill;
+    QColor fill = ink(style.fill);
     if (isContainer(shapeType) && fill.alpha() > 0 && fill.alpha() < 255 && cs && !cs->overlaysHidden &&
         cs->canvasColor.isValid())
         fill = over(fill, cs->canvasColor);
@@ -313,7 +314,7 @@ void NodeItem::paint(QPainter* p, const QStyleOptionGraphicsItem* opt, QWidget*)
     p->setPen(pen);
     p->drawPath(m_outline);
     if (isContainer(shapeType)) {
-        QColor band = style.stroke;
+        QColor band = ink(style.stroke);
         band.setAlpha(28);
         p->fillRect(textRect(), fill.alpha() == 255 ? over(band, fill) : band);
     }
@@ -324,7 +325,7 @@ void NodeItem::paint(QPainter* p, const QStyleOptionGraphicsItem* opt, QWidget*)
     }
     // Skip text once it would be under ~4px tall: unreadable and the main cost when zoomed out.
     if (!m_editor && !text.isEmpty() && lod * style.fontSize >= 4) {
-        p->setPen(style.text);
+        p->setPen(ink(style.text));
         const QRectF tr = textRect();
         if (shapeType == FlowShape::HContainer) {  // title reads bottom-to-top in the left band
             p->save();
@@ -883,6 +884,7 @@ void LinkItem::paint(QPainter* p, const QStyleOptionGraphicsItem* opt, QWidget*)
     const int n = int(m_pts.size());
     if (n < 2) return;
     const auto* c = chart();
+    auto ink = [c](const QColor& col) { return c ? c->ink(col) : col; };
     if (isSelected() && !(c && c->overlaysHidden)) {
         p->setPen(QPen(QColor(37, 99, 235, 90), style.strokeWidth + 6, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
         p->setBrush(Qt::NoBrush);
@@ -898,7 +900,7 @@ void LinkItem::paint(QPainter* p, const QStyleOptionGraphicsItem* opt, QWidget*)
     if (style.arrowEnd) pullBack(n - 1, n - 2);
     if (style.arrowStart) pullBack(0, 1);
     if (style.dash != Qt::NoPen && style.strokeWidth > 0) {
-        p->setPen(QPen(style.stroke, style.strokeWidth, style.dash, Qt::FlatCap, Qt::MiterJoin));
+        p->setPen(QPen(ink(style.stroke), style.strokeWidth, style.dash, Qt::FlatCap, Qt::MiterJoin));
         p->setBrush(Qt::NoBrush);
         p->drawPath(roundedPolyline(line, kLinkCorner));
     }
@@ -909,16 +911,16 @@ void LinkItem::paint(QPainter* p, const QStyleOptionGraphicsItem* opt, QWidget*)
         p->drawPolygon(QPolygonF{tip, tip + u * a + nrm * a * 0.45, tip + u * a - nrm * a * 0.45});
     };
     p->setPen(Qt::NoPen);
-    p->setBrush(style.stroke);
+    p->setBrush(ink(style.stroke));
     if (style.arrowEnd) head(m_pts[n - 2], m_pts[n - 1]);
     if (style.arrowStart) head(m_pts[1], m_pts[0]);
     const double lod = opt->levelOfDetailFromTransform(p->worldTransform());
     if (!m_label.isEmpty() && !m_editor && lod * style.fontSize >= 4) {
-        p->setBrush(style.fill);  // transparent by default
+        p->setBrush(ink(style.fill));  // transparent by default
         p->drawRoundedRect(m_label, 3, 3);
         if (c && !c->overlaysHidden && !c->findText.isEmpty() && text.contains(c->findText, c->findCase))
             p->fillRect(m_label, c->findCurrent == id ? kFindCurrent : kFindMatch);
-        p->setPen(style.text);
+        p->setPen(ink(style.text));
         p->setFont(styleFont(style));
         p->drawText(m_label, int(style.align) | Qt::AlignVCenter, text);
     }
@@ -943,7 +945,7 @@ void LinkItem::startEdit() {
     m_editor = ed;
     ed->document()->setDocumentMargin(0);
     ed->setFont(styleFont(style));
-    ed->setDefaultTextColor(style.text);
+    ed->setDefaultTextColor(chart() ? chart()->ink(style.text) : style.text);
     QTextOption opt = ed->document()->defaultTextOption();
     opt.setAlignment(style.align);
     ed->document()->setDefaultTextOption(opt);
