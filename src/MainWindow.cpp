@@ -346,6 +346,7 @@ void MainWindow::buildMenus() {
     makeAction(file, tr("&Export as PNG / SVG / PDF…"), {QKeySequence(Qt::CTRL | Qt::Key_E)}, [this] { exportChart(); });
     makeAction(file, tr("Export for &LLM (text)…"), {QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_E)},
                [this] { exportChart(true); });
+    makeAction(file, tr("Export as up&date for LLM…"), {}, [this] { exportLlmUpdate(); });
     makeAction(file, tr("A&uto-save interval…"), {}, [this] {
         bool ok = false;
         const int min = QInputDialog::getInt(this, tr("Auto-save"), tr("Save every (minutes):"),
@@ -821,6 +822,7 @@ bool MainWindow::writeFile(OpenChart* t, const QString& path) {
     t->path = QFileInfo(path).absoluteFilePath();
     QSettings().setValue("lastDir", QFileInfo(t->path).absolutePath());
     t->scene->undoStack()->setClean();
+    t->scene->chartIdSaved = true;
     removeRecovery(t);
     HomeScreen::addRecent(t->path);
     chartStateChanged(t);
@@ -935,8 +937,57 @@ void MainWindow::exportChart(bool forLlm) {
 
     exportDirs[cur()->path] = QFileInfo(path).absolutePath();
     QSettings().setValue("exportDirs", exportDirs);
+    if (forLlm) stampChartId(cur());
     const bool ok = scene()->exportTo(path);
     if (!ok) QMessageBox::warning(this, tr("Export failed"), tr("Cannot write %1.").arg(QDir::toNativeSeparators(path)));
+}
+
+void MainWindow::exportLlmUpdate() {
+    if (!cur()) return;
+    QVariantMap exportDirs = QSettings().value("exportDirs").toMap();
+    const QString dir = exportDirs.value(cur()->path, cur()->path.isEmpty() ? QSettings().value("lastDir").toString()
+                                                                            : QFileInfo(cur()->path).absolutePath()).toString();
+    const QString path = QFileDialog::getOpenFileName(this, tr("Pick the earlier LLM export to update"), dir,
+                                                      tr("LLM export (*.md *.txt)"));
+    if (path.isEmpty()) return;
+    QFile in(path);
+    if (!in.open(QIODevice::ReadOnly)) {
+        QMessageBox::warning(this, tr("Export failed"), tr("Cannot read %1:\n%2").arg(QDir::toNativeSeparators(path), in.errorString()));
+        return;
+    }
+    QString error;
+    const QString text = scene()->toLlmText(QFileInfo(path).completeBaseName(), QString::fromUtf8(in.readAll()), &error);
+    in.close();
+    if (text.isNull()) {
+        QMessageBox::warning(this, tr("Cannot update"), error);
+        return;
+    }
+    stampChartId(cur());
+    QSaveFile out(path);
+    if (!out.open(QIODevice::WriteOnly) || out.write(text.toUtf8()) < 0 || !out.commit()) {
+        QMessageBox::warning(this, tr("Export failed"), tr("Cannot write %1.").arg(QDir::toNativeSeparators(path)));
+        return;
+    }
+    exportDirs[cur()->path] = QFileInfo(path).absolutePath();
+    QSettings().setValue("exportDirs", exportDirs);
+}
+
+// An LLM export names the chart by its id, so the file on disk must hold that id too, or the
+// next load would make a new one. Writes only the id: unsaved edits stay unsaved.
+void MainWindow::stampChartId(OpenChart* t) {
+    if (t->path.isEmpty() || t->scene->chartIdSaved) return;
+    QFile f(t->path);
+    if (!f.open(QIODevice::ReadOnly)) return;
+    QByteArray data = f.readAll();
+    f.close();
+    if (data.startsWith("\xEF\xBB\xBF")) data.remove(0, 3);
+    QJsonObject o = QJsonDocument::fromJson(data).object();
+    if (data.trimmed().isEmpty()) o = {{"format", "flowx"}, {"version", 1}};
+    if (o["format"].toString() != QLatin1String("flowx")) return;
+    o["chartId"] = t->scene->chartId;
+    QSaveFile out(t->path);
+    if (out.open(QIODevice::WriteOnly) && out.write(QJsonDocument(o).toJson()) >= 0 && out.commit())
+        t->scene->chartIdSaved = true;
 }
 
 void MainWindow::copy() {

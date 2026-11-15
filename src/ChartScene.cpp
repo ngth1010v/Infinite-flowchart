@@ -12,7 +12,9 @@
 #include <QGuiApplication>
 #include <QJsonArray>
 #include <QPen>
+#include <QRegularExpression>
 #include <QSet>
+#include <QUuid>
 #include <algorithm>
 #include <cmath>
 #include <numeric>
@@ -50,7 +52,8 @@ private:
     bool m_first = true;
 };
 
-ChartScene::ChartScene(QObject* parent) : QGraphicsScene(parent), m_undo(new QUndoStack(this)) {
+ChartScene::ChartScene(QObject* parent)
+    : QGraphicsScene(parent), chartId(QUuid::createUuid().toString(QUuid::WithoutBraces)), m_undo(new QUndoStack(this)) {
     m_undo->setUndoLimit(300);
     // Resize handles show only for a single selection, so repaint selected nodes when it changes.
     connect(this, &QGraphicsScene::selectionChanged, this, [this] {
@@ -76,11 +79,14 @@ QJsonObject ChartScene::toJson() const {
         auto* c = m_items[id];
         (c->type() == NodeItem::Type ? nodes : links).append(c->toJson());
     }
-    return {{"format", "flowx"}, {"version", 1}, {"nodes", nodes}, {"links", links}};
+    return {{"format", "flowx"}, {"version", 1}, {"chartId", chartId}, {"nodes", nodes}, {"links", links}};
 }
 
 void ChartScene::fromJson(const QJsonObject& o) {
     clearAll();
+    chartId = o["chartId"].toString();
+    chartIdSaved = !chartId.isEmpty();
+    if (chartId.isEmpty()) chartId = QUuid::createUuid().toString(QUuid::WithoutBraces);
     for (const auto& v : o["nodes"].toArray()) {
         QJsonObject j = v.toObject();
         j["kind"] = "node";
@@ -161,7 +167,51 @@ bool ChartScene::exportTo(const QString& path) {
     return ok;
 }
 
-QString ChartScene::toLlmText(const QString& title) const {
+namespace {
+// What an LLM export says, read back from its text: enough to diff it against the chart now.
+struct LlmOutline {
+    QString chartId;
+    QHash<int, QPair<QString, int>> shapes;  // id -> (label, parent id; 0 = top level)
+    QList<QPair<QString, QString>> links;    // (key: "from arrow to tail", line without "- ")
+};
+
+LlmOutline parseLlmText(const QString& text) {
+    static const QRegularExpression idLine(R"(^<!-- flowx chart (\S+) -->$)"), item(R"(^( *)- (?:\((?:new|changed)\) )?(.*)$)"),
+        leadId(R"(^\[(\d+)\])");
+    LlmOutline o;
+    QString section;
+    QList<int> stack;  // shape ids along the current nesting path
+    for (QString line : text.split('\n')) {
+        if (line.endsWith('\r')) line.chop(1);
+        if (const auto m = idLine.match(line); m.hasMatch()) { o.chartId = m.captured(1); continue; }
+        if (line.startsWith("## ")) { section = line; continue; }
+        const auto m = item.match(line);
+        if (!m.hasMatch()) continue;
+        const QString body = m.captured(2);
+        const int from = leadId.match(body).captured(1).toInt();
+        if (section == QLatin1String("## Shapes") && from) {
+            const int depth = int(m.captured(1).size()) / 2;
+            while (stack.size() > depth) stack.removeLast();
+            o.shapes[from] = {body, stack.isEmpty() ? 0 : stack.last()};
+            stack << from;
+        } else if (section == QLatin1String("## Links")) {
+            // "<from label> <arrow> <to label><tail>": labels are known from the Shapes section.
+            QString key = body;
+            const QString fromLabel = o.shapes.value(from).first;
+            if (from && body.startsWith(fromLabel + ' ')) {
+                const QString rest = body.mid(fromLabel.size() + 1), arrow = rest.section(' ', 0, 0), tail = rest.mid(arrow.size() + 1);
+                const int to = leadId.match(tail).captured(1).toInt();
+                const QString toLabel = o.shapes.value(to).first;
+                if (to && tail.startsWith(toLabel)) key = QString("%1 %2 %3%4").arg(from).arg(arrow).arg(to).arg(tail.mid(toLabel.size()));
+            }
+            o.links << QPair(key, body);
+        }
+    }
+    return o;
+}
+}  // namespace
+
+QString ChartScene::toLlmText(const QString& title, const QString& previous, QString* error) const {
     QList<NodeItem*> nodes;
     for (auto* c : m_items)
         if (auto* n = qgraphicsitem_cast<NodeItem*>(c)) nodes << n;
@@ -173,6 +223,8 @@ QString ChartScene::toLlmText(const QString& title) const {
     // Parent = smallest container (bigger than the shape itself) holding the shape's center,
     // the same rule contents() uses.
     QHash<const NodeItem*, QList<NodeItem*>> kids;
+    LlmOutline now;  // the chart as it is, in the same form parseLlmText reads back
+    now.chartId = chartId;
     for (auto* n : nodes) {
         NodeItem* parent = nullptr;
         for (auto* c : nodes) {
@@ -186,31 +238,87 @@ QString ChartScene::toLlmText(const QString& title) const {
         const QString t = n->text.simplified();
         return QString("[%1] %2").arg(n->id).arg(shapeName(n->shapeType)) + (t.isEmpty() ? "" : " \"" + t + "\"");
     };
-
-    QString out = "# Flowchart: " + title + "\n\n"
-                  "Shapes are listed as [id] Type \"text\". Indented shapes are inside the container above them.\n\n"
-                  "## Shapes\n\n";
+    QList<QPair<int, int>> rows;  // (shape id, depth) in output order
     std::function<void(const NodeItem*, int)> tree = [&](const NodeItem* parent, int depth) {
         for (auto* n : kids.value(parent)) {
-            out += QString(depth * 2, ' ') + "- " + label(n) + "\n";
+            rows << QPair(n->id, depth);
+            now.shapes[n->id] = {label(n), parent ? parent->id : 0};
             tree(n, depth + 1);
         }
     };
     tree(nullptr, 0);
-
-    out += "\n## Links\n\n";
     QList<int> ids = m_items.keys();
     std::sort(ids.begin(), ids.end());
-    int linkCount = 0;
     for (int id : ids) {
         auto* l = qgraphicsitem_cast<LinkItem*>(m_items[id]);
         if (!l || !l->from || !l->to) continue;
         const char* arrow = l->style.arrowEnd ? (l->style.arrowStart ? "<->" : "->") : (l->style.arrowStart ? "<-" : "--");
-        const QString t = l->text.simplified();
-        out += "- " + label(l->from) + " " + arrow + " " + label(l->to) + (t.isEmpty() ? "" : " (label: \"" + t + "\")") + "\n";
-        ++linkCount;
+        const QString t = l->text.simplified(), tail = t.isEmpty() ? "" : " (label: \"" + t + "\")";
+        now.links << QPair(QString("%1 %2 %3%4").arg(l->from->id).arg(arrow).arg(l->to->id).arg(tail),
+                           label(l->from) + " " + arrow + " " + label(l->to) + tail);
     }
-    if (!linkCount) out += "(none)\n";
+
+    // Diff against the previous export: shapes by id, links by (ends, arrow, label) as a multiset.
+    const bool update = !previous.isNull();
+    QHash<int, QString> mark;  // shape id -> "(new) " / "(changed) "
+    QList<bool> newLink(now.links.size(), false);
+    QStringList changes;
+    if (update) {
+        const LlmOutline old = parseLlmText(previous);
+        auto fail = [&](const QString& why) {
+            if (error) *error = why;
+            return QString();
+        };
+        if (old.chartId.isEmpty())
+            return fail(tr("This file is not an LLM export with a chart id. Files exported before this feature "
+                           "existed cannot be updated; use Export for LLM once to make a new one."));
+        if (old.chartId != chartId) return fail(tr("This file was exported from a different chart."));
+        auto where = [](const QHash<int, QPair<QString, int>>& shapes, int parent) {
+            return parent ? "inside " + shapes.value(parent).first : QString("top level");
+        };
+        for (const auto& [id, depth] : rows) {
+            const auto& [lbl, parent] = now.shapes[id];
+            if (!old.shapes.contains(id)) {
+                mark[id] = "(new) ";
+                changes << "- Added shape: " + lbl + " (" + where(now.shapes, parent) + ")";
+                continue;
+            }
+            const auto& [oldLbl, oldParent] = old.shapes[id];
+            QStringList what;
+            if (oldLbl != lbl) what << "was " + oldLbl;
+            if (oldParent != parent) what << "moved from " + where(old.shapes, oldParent) + " to " + where(now.shapes, parent);
+            if (what.isEmpty()) continue;
+            mark[id] = "(changed) ";
+            changes << "- Changed shape: " + lbl + " (" + what.join("; ") + ")";
+        }
+        QList<int> oldIds = old.shapes.keys();
+        std::sort(oldIds.begin(), oldIds.end());
+        for (int id : oldIds)
+            if (!now.shapes.contains(id)) changes << "- Removed shape: " + old.shapes[id].first;
+        QHash<QString, int> oldCount, nowCount;
+        for (const auto& l : old.links) ++oldCount[l.first];
+        for (int i = 0; i < now.links.size(); ++i) {
+            ++nowCount[now.links[i].first];
+            if (oldCount[now.links[i].first]-- > 0) continue;
+            newLink[i] = true;
+            changes << "- Added link: " + now.links[i].second;
+        }
+        for (const auto& l : old.links)
+            if (nowCount[l.first]-- <= 0) changes << "- Removed link: " + l.second;
+    }
+
+    QString out = "# Flowchart: " + title + "\n\n<!-- flowx chart " + chartId + " -->\n\n"
+                  "Shapes are listed as [id] Type \"text\". Indented shapes are inside the container above them.\n";
+    if (update) {
+        out += "Lines marked (new) or (changed) differ from the previous export; removed items are listed only under Changes.\n\n"
+               "## Changes since the previous export\n\n";
+        out += changes.isEmpty() ? "(none)\n" : changes.join('\n') + "\n";
+    }
+    out += "\n## Shapes\n\n";
+    for (const auto& [id, depth] : rows) out += QString(depth * 2, ' ') + "- " + mark.value(id) + now.shapes[id].first + "\n";
+    out += "\n## Links\n\n";
+    for (int i = 0; i < now.links.size(); ++i) out += QString("- ") + (newLink[i] ? "(new) " : "") + now.links[i].second + "\n";
+    if (now.links.isEmpty()) out += "(none)\n";
     return out;
 }
 

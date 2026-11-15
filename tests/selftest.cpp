@@ -380,6 +380,35 @@ int main(int argc, char** argv) {
         CHECK(sc.exportTo(path));
         QFile f(path);
         CHECK(f.open(QIODevice::ReadOnly) && QString::fromUtf8(f.readAll()) == sc.toLlmText("chart"));
+
+        // Export as update: same chart diffs; changes marked; the update itself can be updated again.
+        const QString v1 = sc.toLlmText("demo");
+        CHECK(v1.contains("<!-- flowx chart " + sc.chartId + " -->"));
+        QString err;
+        const QString same = sc.toLlmText("demo", v1, &err);
+        CHECK(!same.isNull() && same.contains("## Changes since the previous export\n\n(none)\n") && !same.contains("- (new)"));
+        b->text = "Done?";
+        b->refresh();
+        auto* c = sc.addNode(FlowShape::Process, {3000, 0});
+        sc.beginLinkDrag(b, Port::Right);
+        sc.endLinkDrag(c->portScenePos(Port::Left));
+        const QString v2 = sc.toLlmText("demo", v1, &err);
+        CHECK(v2.contains(QString("- (changed) [%1] Decision \"Done?\"\n").arg(b->id)));
+        CHECK(v2.contains(QString("- Changed shape: [%1] Decision \"Done?\" (was [%1] Decision \"OK?\")").arg(b->id)));
+        CHECK(v2.contains(QString("- (new) [%1] Process\n").arg(c->id)));
+        CHECK(v2.contains(QString("- (new) [%1] Decision \"Done?\" -> [%2] Process").arg(b->id).arg(c->id)));
+        CHECK(!v2.contains("Removed") && !v2.contains(QString("(new) [%1] Process \"Do this\" ->").arg(a->id)));
+        const QString v3 = sc.toLlmText("demo", v2, &err);
+        CHECK(v3.contains("(none)\n\n## Shapes") && !v3.contains("- (new)") && !v3.contains("- (changed)"));
+        sc.clearSelection();
+        c->setSelected(true);
+        sc.deleteSelected();
+        const QString v4 = sc.toLlmText("demo", v2, &err);
+        CHECK(v4.contains(QString("- Removed shape: [%1] Process\n").arg(c->id)) && v4.contains("- Removed link: "));
+
+        // Other charts and pre-id exports are refused.
+        CHECK(ChartScene().toLlmText("x", v1, &err).isNull() && err.contains("different chart"));
+        CHECK(sc.toLlmText("x", "# Flowchart: old\n\n## Shapes\n", &err).isNull() && err.contains("chart id"));
     }
 
     // Malformed input is skipped, not trusted.

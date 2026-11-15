@@ -60,8 +60,15 @@ public:
     int itemCount() const { return int(m_items.size()); }
     bool exportTo(const QString& path);   // .png (2x), .svg, .pdf, or .md/.txt (toLlmText) by extension
     // Plain-text outline for LLMs: which container holds which shape, and which shape links to
-    // which. No positions or styles.
-    QString toLlmText(const QString& title) const;
+    // which. No positions or styles. Carries chartId in an HTML comment.
+    // With `previous` (an earlier export of this chart), lines that differ are marked and a
+    // "Changes" section lists what was added, changed and removed. If `previous` is not an
+    // export of this chart, returns a null string and sets *error.
+    QString toLlmText(const QString& title, const QString& previous = {}, QString* error = nullptr) const;
+    // Identifies the chart across saves and LLM exports. fromJson takes it from the file or makes
+    // a new one; chartIdSaved says whether the file on disk already holds it.
+    QString chartId;
+    bool chartIdSaved = false;
 
     // Undoable edits
     NodeItem* addNode(FlowShape s, QPointF center);

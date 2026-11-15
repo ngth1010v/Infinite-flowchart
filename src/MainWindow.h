@@ -106,6 +106,8 @@ private:
     bool saveAs(OpenChart* t);
     bool writeFile(OpenChart* t, const QString& path);
     void exportChart(bool forLlm = false);  // forLlm: text outline (.md/.txt) instead of an image
+    void exportLlmUpdate();                 // rewrite an earlier LLM export of this chart, marking the changes
+    void stampChartId(OpenChart* t);
     void copy();
     void paste();
     void applyTheme(bool dark);

@@ -26,7 +26,7 @@ Open a chart directly: `Flowchart.exe path\to\chart.flowx`. Example: `samples\sq
 | Edit | Ctrl+Z / Ctrl+Y, Ctrl+C / X / V, Ctrl+D duplicate, Delete, Ctrl+A, Ctrl+Shift+F fit to content (selected shapes fit their text, 2+ shapes then all get the largest width and height; selected containers fit their contents, padding set in the style panel), Ctrl+L with only 2+ links selected: bundle them (middle segments moved onto shared lines, as little as possible), Ctrl+Arrow align selected shapes' left/right/top/bottom edges (containers and links untouched), Ctrl+Shift+Arrow align and space them evenly |
 | Find | Ctrl+F opens a small find & replace window (drag it anywhere). Matches highlight on the canvas as you type; Aa (Alt+C) toggles match case. The current match is orange and centered on screen. Enter / Shift+Enter or ↑ ↓: next / previous. Replace: changes the current shape or link label and moves on; Replace all: every match, one undo step. Esc closes |
 | Folder | No tabs (the home screen lists the last 6 opened folders above recent charts): one chart is shown at a time. Ctrl+O opens a chart in place of the current one (asks to save unsaved changes). Ctrl+Shift+O (or Open folder… on the home screen) opens a folder: a pane on the far left lists its .flowx files and subfolders as a tree. Click a file to show it (unsaved charts stay loaded and get a red dot), click a folder to open/close it, drag rows onto a folder (or empty space: the root) to move them on disk, F2 renames. + New file (or Ctrl+N) creates Untitled.flowx in the root and starts naming it. Ctrl+Alt+S saves all unsaved charts. Ctrl+Alt+B shows/hides the pane |
-| File | Ctrl+N, Ctrl+O, Ctrl+Shift+O open folder, Ctrl+S, Ctrl+Alt+S save all, Ctrl+Shift+S, Ctrl+E export PNG/SVG/PDF, Ctrl+Shift+E export for LLM (.md/.txt outline: container nesting + links, no positions) |
+| File | Ctrl+N, Ctrl+O, Ctrl+Shift+O open folder, Ctrl+S, Ctrl+Alt+S save all, Ctrl+Shift+S, Ctrl+E export PNG/SVG/PDF, Ctrl+Shift+E export for LLM (.md/.txt outline: container nesting + links, no positions), Export as update for LLM (rewrite an earlier export of the same chart with changes marked) |
 | View | F1 or the ⌨ Shortcuts button (bottom of the shape panel) lists every shortcut, Ctrl+B shape panel icons-only, Ctrl+M minimap, View > Dark theme |
 
 Unsaved work is autosaved (every minute by default): saved charts write their own file, Untitled
@@ -48,7 +48,7 @@ then copy the MinGW DLLs it depends on (`ldd dist/Flowchart.exe`) into `dist/`.
 
 ## Code map
 
-| File | Ctrl+N, Ctrl+O, Ctrl+Shift+O open folder, Ctrl+S, Ctrl+Alt+S save all, Ctrl+Shift+S, Ctrl+E export PNG/SVG/PDF, Ctrl+Shift+E export for LLM (.md/.txt outline: container nesting + links, no positions) |
+| File | Ctrl+N, Ctrl+O, Ctrl+Shift+O open folder, Ctrl+S, Ctrl+Alt+S save all, Ctrl+Shift+S, Ctrl+E export PNG/SVG/PDF, Ctrl+Shift+E export for LLM (.md/.txt outline: container nesting + links, no positions), Export as update for LLM (rewrite an earlier export of the same chart with changes marked) |
 |---|---|
 | `src/Model.*` | Shape list, shape outlines and ports, `Style`, JSON helpers |
 | `src/Items.*` | `NodeItem` (shape, handles, quick-connect arrows, inline text), `LinkItem` (elbow routing) |
