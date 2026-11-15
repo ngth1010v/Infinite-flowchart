@@ -14,7 +14,6 @@
 #include <QMimeData>
 #include <QPainter>
 #include <QPlainTextEdit>
-#include <QScopedValueRollback>
 #include <QSpinBox>
 #include <QStyledItemDelegate>
 #include <QToolButton>
@@ -24,31 +23,7 @@
 
 // ---------------------------------------------------------------- ShapePalette
 
-namespace {
-// Collapsed palette: icon on top of the (empty) text, which centers it in the row.
-class PaletteDelegate : public QStyledItemDelegate {
-public:
-    using QStyledItemDelegate::QStyledItemDelegate;
-    bool compact = false;
-
-    QSize sizeHint(const QStyleOptionViewItem& o, const QModelIndex& i) const override {
-        const QScopedValueRollback keep(m_sizing, true);  // rows keep their expanded height
-        return QStyledItemDelegate::sizeHint(o, i);
-    }
-
-protected:
-    void initStyleOption(QStyleOptionViewItem* o, const QModelIndex& i) const override {
-        QStyledItemDelegate::initStyleOption(o, i);
-        if (compact && !m_sizing) o->decorationPosition = QStyleOptionViewItem::Top;
-    }
-
-private:
-    mutable bool m_sizing = false;
-};
-}  // namespace
-
 ShapePalette::ShapePalette(QWidget* parent) : QListWidget(parent) {
-    setItemDelegate(new PaletteDelegate(this));
     setIconSize(QSize(44, 30));
     setDragEnabled(true);
     setDragDropMode(DragOnly);
@@ -56,6 +31,9 @@ ShapePalette::ShapePalette(QWidget* parent) : QListWidget(parent) {
     setFrameShape(QFrame::NoFrame);
     setSpacing(1);
     setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    // Icons stay at the left edge in both widths and names are cut off by the edge (no "…"),
+    // so sliding the panel open/closed moves nothing: it only reveals or hides.
+    setTextElideMode(Qt::ElideNone);
     connect(this, &QListWidget::itemClicked, this, [this](QListWidgetItem* it) {
         if (!it->data(Qt::UserRole).isValid()) return;  // section header
         emit shapeClicked(FlowShape(it->data(Qt::UserRole).toInt()));
@@ -70,17 +48,15 @@ void ShapePalette::rebuildIcons(const QColor& line) {
         const FlowShape s = FlowShape(i);
         if (i == 0 || (isContainer(s) && !isContainer(FlowShape(i - 1)))) {  // section header
             const QString title = isContainer(s) ? tr("Containers") : tr("Shapes");
-            auto* h = new QListWidgetItem(m_compact ? QString() : title);
-            h->setData(Qt::UserRole + 1, title);
+            auto* h = new QListWidgetItem(title);
             h->setFlags(Qt::NoItemFlags);
             QFont f = font();
             f.setBold(true);
             h->setFont(f);
-            if (i > 0) {  // later sections get a gap above, which stays as a spacer when collapsed
-                h->setTextAlignment(Qt::AlignLeft | Qt::AlignBottom);
+            if (i > 0) {  // later sections get a gap above
                 h->setSizeHint(QSize(0, QFontMetrics(f).height() + 28));
+                h->setTextAlignment(Qt::AlignLeft | Qt::AlignBottom);
             }
-            h->setHidden(m_compact && i == 0);
             addItem(h);
         }
         QPixmap pm(QSize(44, 30) * dpr);
@@ -102,19 +78,26 @@ void ShapePalette::rebuildIcons(const QColor& line) {
         it->setToolTip(shapeName(s) + '\n' + tr("Drag onto the canvas, or click to add at the center"));
         addItem(it);
     }
+    setCompact(m_compact);
+    setHeaderScale(m_headerScale);
 }
 
 void ShapePalette::setCompact(bool compact) {
     m_compact = compact;
-    static_cast<PaletteDelegate*>(itemDelegate())->compact = compact;
-    for (int i = 0; i < count(); ++i) {
-        QListWidgetItem* it = item(i);
-        if (!it->data(Qt::UserRole).isValid()) {  // header: no title when collapsed, but keep its gap
-            it->setText(compact ? QString() : it->data(Qt::UserRole + 1).toString());
-            it->setHidden(compact && i == 0);
-        } else it->setText(compact ? QString() : shapeName(FlowShape(it->data(Qt::UserRole).toInt())));
-    }
-    doItemsLayout();
+    for (int i = 0; i < count(); ++i)
+        if (QListWidgetItem* it = item(i); it->data(Qt::UserRole).isValid())  // headers keep their title
+            it->setText(compact ? QString() : shapeName(FlowShape(it->data(Qt::UserRole).toInt())));
+}
+
+void ShapePalette::setHeaderScale(qreal k) {
+    m_headerScale = k;
+    for (int i = 0; i < count(); ++i)
+        if (QListWidgetItem* it = item(i); !it->data(Qt::UserRole).isValid()) {
+            QFont f = font();
+            f.setBold(true);
+            f.setPointSizeF(f.pointSizeF() * k);
+            it->setFont(f);
+        }
 }
 
 QStringList ShapePalette::mimeTypes() const { return {QString::fromLatin1(kShapeMime)}; }

@@ -23,6 +23,7 @@ public:
     explicit ShapePalette(QWidget* parent = nullptr);
     void rebuildIcons(const QColor& line);
     void setCompact(bool compact);  // icons only
+    void setHeaderScale(qreal k);  // section title size; shrinks with the panel so titles fit when collapsed
 
 signals:
     void shapeClicked(FlowShape s);
@@ -33,6 +34,7 @@ protected:
 
 private:
     bool m_compact = false;
+    qreal m_headerScale = 1;
 };
 
 // Right side: style of the selected nodes/links. Fields where the selection differs show blank.

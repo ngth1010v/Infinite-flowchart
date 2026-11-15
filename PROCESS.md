@@ -1,46 +1,38 @@
 # PROCESS
 
-**Status:** DONE
-**Started:** 2026-11-10 19:45
-**Last updated:** 2026-11-10 20:25
+**Status:** DONE (exe link pending: app was running)
+**Started:** 2026-11-15
+**Last updated:** 2026-11-15
 
 ## Task
-"open multi file as multi tab":
-- tab bar on top of the app with file names, browser-like
-- always at least 1 tab; closing the only tab closes the app
-- '+' button on the bar opens a file selector and adds the file(s) as tabs
-- closing a tab asks to save if unsaved
-- home screen (recent files): clicking a file opens just that file (no multi-file workspace)
+"remove the tab bar, open a folder":
+- remove the tab bar
+- open a folder: new pane left of the shape palette with the folder's .flowx files as a tree
+- pane collapses/opens; click a file to switch to it; click a folder to expand/collapse (caret on the right)
+- unsaved file: red dot on the right of its row
+- drag/drop rows to move files
+- "+ New file" button at the bottom (and a shortcut): new file in the root folder
+- save all (user picked Ctrl+Alt+S)
 
-## Plan
-1. [x] Panels: `StylePanel::setScene`, `FindPanel::setView` (follow the current tab; accept null)
-2. [x] MainWindow: `struct ChartTab {scene, view, path, recovery}`; QTabBar + '+' above the canvas;
-   QStackedWidget of views; QUndoGroup for Undo/Redo; per-tab save/maybeSave/writeFile;
-   Ctrl+W closes tab (last tab -> close app); Ctrl+Tab / Ctrl+Shift+Tab
-3. [x] Autosave: one recovery file per tab (`autosave-<id>.flowx`); old `autosave.flowx` still recovered
-4. [x] guitest: tabs test
-5. [x] README update
+## Decisions (asked the user)
+- Save all: Ctrl+Alt+S
+- Open a single file without a folder: replaces the current chart (asks to save)
+- New file: auto-named Untitled.flowx / Untitled 2.flowx… in the root, then inline rename
 
-Decisions: one ChartScene+ChartView per tab (own undo history and zoom). Home screen only at
-startup. Opening an already-open file switches to its tab. An empty untouched Untitled tab is
-replaced when a file is opened.
+Other choices: Ctrl+Shift+O opens a folder, Ctrl+Alt+B shows/hides the pane, Ctrl+N = new file
+when a folder is open. Every chart opened from the folder stays loaded (keeps undo + unsaved
+changes). Rename (F2) keeps the .flowx extension. Moving/renaming updates open charts' paths.
 
 ## Done
-- src/Panels.h/.cpp, src/MainWindow.h/.cpp, tests/guitest.cpp, README.md
-
-## Doing now
-- Nothing.
-
-## Not done yet
-- Copy `build/Flowchart.exe` to `dist/` (optional, not asked yet).
+- src/MainWindow.h/.cpp (OpenChart list replaces QTabBar; FolderModel/FolderTree/FolderDelegate)
+- src/HomeScreen.h/.cpp (Open folder… button), tests/guitest.cpp, README.md
 
 ## Tests / verification
 | Case | How | Result |
 |------|-----|--------|
-| flowcore + tests build | `cmake --build build --target selftest guitest` | pass |
-| Flowchart.exe link | `cmake --build build` | pass (after user closed the app) |
 | selftest | `build/selftest.exe` | pass |
-| guitest (incl. new tabs test) | `build/guitest.exe` | pass |
+| guitest (new folder test: replace, switch, red dot state, drag move, new file + rename, Ctrl+Alt+S) | `build/guitest.exe` | pass |
+| Flowchart.exe link | `cmake --build build` | blocked: Flowchart.exe was running |
 
 ## Notes for resuming
 - Build env: PATH=/c/msys64/ucrt64/bin. Build dir `build/`.

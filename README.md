@@ -25,12 +25,12 @@ Open a chart directly: `Flowchart.exe path\to\chart.flowx`. Example: `samples\sq
 | Snap | Grid + alignment guides while dragging; hold Alt to place freely; toggle in View menu |
 | Edit | Ctrl+Z / Ctrl+Y, Ctrl+C / X / V, Ctrl+D duplicate, Delete, Ctrl+A, Ctrl+Shift+F fit to content (selected shapes fit their text, 2+ shapes then all get the largest width and height; selected containers fit their contents, padding set in the style panel), Ctrl+L with only 2+ links selected: bundle them (middle segments moved onto shared lines, as little as possible), Ctrl+Arrow align selected shapes' left/right/top/bottom edges (containers and links untouched), Ctrl+Shift+Arrow align and space them evenly |
 | Find | Ctrl+F opens a small find & replace window (drag it anywhere). Matches highlight on the canvas as you type; Aa (Alt+C) toggles match case. The current match is orange and centered on screen. Enter / Shift+Enter or ↑ ↓: next / previous. Replace: changes the current shape or link label and moves on; Replace all: every match, one undo step. Esc closes |
-| Tabs | Each open chart is a tab on the bar at the top (• = unsaved). + or Ctrl+O opens one or more charts in new tabs (a chart already open just switches to its tab); Ctrl+N adds an Untitled tab. Ctrl+Tab / Ctrl+Shift+Tab switch tabs, drag a tab to reorder. Closing a tab (✕ or Ctrl+W) asks to save unsaved changes; closing the last tab closes the app. The home screen shows only at startup: clicking a recent chart opens that one chart |
-| File | Ctrl+N, Ctrl+O, Ctrl+S, Ctrl+Shift+S, Ctrl+E export PNG/SVG/PDF, Ctrl+Shift+E export for LLM (.md/.txt outline: container nesting + links, no positions), Ctrl+W close tab |
+| Folder | No tabs (the home screen lists the last 6 opened folders above recent charts): one chart is shown at a time. Ctrl+O opens a chart in place of the current one (asks to save unsaved changes). Ctrl+Shift+O (or Open folder… on the home screen) opens a folder: a pane on the far left lists its .flowx files and subfolders as a tree. Click a file to show it (unsaved charts stay loaded and get a red dot), click a folder to open/close it, drag rows onto a folder (or empty space: the root) to move them on disk, F2 renames. + New file (or Ctrl+N) creates Untitled.flowx in the root and starts naming it. Ctrl+Alt+S saves all unsaved charts. Ctrl+Alt+B shows/hides the pane |
+| File | Ctrl+N, Ctrl+O, Ctrl+Shift+O open folder, Ctrl+S, Ctrl+Alt+S save all, Ctrl+Shift+S, Ctrl+E export PNG/SVG/PDF, Ctrl+Shift+E export for LLM (.md/.txt outline: container nesting + links, no positions) |
 | View | F1 or the ⌨ Shortcuts button (bottom of the shape panel) lists every shortcut, Ctrl+B shape panel icons-only, Ctrl+M minimap, View > Dark theme |
 
 Unsaved work is autosaved (every minute by default): saved charts write their own file, Untitled
-ones get a recovery copy `%APPDATA%\Flowchart\Flowchart\autosave-*.flowx` (one per tab), offered
+ones get a recovery copy `%APPDATA%\Flowchart\Flowchart\autosave-*.flowx` (one per unsaved chart), offered
 for recovery after a crash.
 
 ## Build (MSYS2 UCRT64)
@@ -48,14 +48,14 @@ then copy the MinGW DLLs it depends on (`ldd dist/Flowchart.exe`) into `dist/`.
 
 ## Code map
 
-| File | What |
+| File | Ctrl+N, Ctrl+O, Ctrl+Shift+O open folder, Ctrl+S, Ctrl+Alt+S save all, Ctrl+Shift+S, Ctrl+E export PNG/SVG/PDF, Ctrl+Shift+E export for LLM (.md/.txt outline: container nesting + links, no positions) |
 |---|---|
 | `src/Model.*` | Shape list, shape outlines and ports, `Style`, JSON helpers |
 | `src/Items.*` | `NodeItem` (shape, handles, quick-connect arrows, inline text), `LinkItem` (elbow routing) |
 | `src/ChartScene.*` | Items by id, undo (one JSON-snapshot command type), clipboard, snapping/guides, export |
 | `src/ChartView.*` | Zoom/pan, adaptive grid, minimap, shape drop |
 | `src/Panels.*` | Left shape palette, right style panel |
-| `src/HomeScreen.*`, `src/MainWindow.*` | Home screen, tabs (one scene + view per tab), menus, open/save, autosave, theme |
+| `src/HomeScreen.*`, `src/MainWindow.*` | Home screen, folder pane, open charts (one scene + view each), menus, open/save, autosave, theme |
 
 ## Credits
 

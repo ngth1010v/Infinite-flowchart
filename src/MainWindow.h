@@ -10,16 +10,19 @@ class ChartView;
 class HomeScreen;
 class QLabel;
 class QScrollArea;
+class QFileSystemModel;
 class QStackedWidget;
-class QTabBar;
 class QToolButton;
+class QTreeView;
 class QUndoGroup;
 class FindPanel;
 class ShapePalette;
 class StylePanel;
 
-// One open chart. Each tab has its own scene (so its own undo history) and view (zoom, scroll).
-struct ChartTab {
+// One open chart: its own scene (so its own undo history) and view (zoom, scroll). Only the current
+// one is shown. Without a folder there is one; with a folder, every chart opened from it stays
+// loaded, so switching files keeps unsaved changes (red dot in the folder pane).
+struct OpenChart {
     ChartScene* scene;
     ChartView* view;
     QString path;      // empty: Untitled
@@ -31,8 +34,12 @@ class MainWindow : public QMainWindow {
 public:
     MainWindow();
     void start(const QString& fileArg);  // crash recovery, then open a file given on the command line
-    bool openFile(const QString& path);  // in a new tab, or switches to the tab already showing it
-    int tabCount() const;
+    bool openFile(const QString& path);  // replaces the current chart; with a folder open, switches to it
+    void openFolder(const QString& dir);  // shows the folder pane with the folder's .flowx files
+    bool newFileInFolder();  // Untitled.flowx (or Untitled 2…) in the folder root, opened, name being edited
+    void saveAll();
+    int chartCount() const { return m_charts.size(); }
+    QString currentPath() const;
 
 protected:
     void closeEvent(QCloseEvent* e) override;
@@ -40,10 +47,20 @@ protected:
 
 private:
     HomeScreen* m_home;
-    QTabBar* m_tabs;
-    QStackedWidget* m_views;  // one ChartView per tab
-    QUndoGroup* m_undoGroup;  // Undo/Redo act on the current tab
-    bool m_dark = false, m_minimap = true, m_snap = true;  // applied to every tab
+    QList<OpenChart*> m_charts;
+    OpenChart* m_cur = nullptr;
+    QStackedWidget* m_views;  // one ChartView per chart, plus a placeholder when none is current
+    QWidget* m_noChart;
+    QUndoGroup* m_undoGroup;  // Undo/Redo act on the current chart
+    bool m_dark = false, m_minimap = true, m_snap = true;  // applied to every chart
+    QString m_folder;  // open folder; empty: single-file mode
+    QFileSystemModel* m_fsModel;
+    QTreeView* m_tree;
+    QWidget* m_folderBox;
+    QWidget* m_folderGap;
+    QWidget* m_folderBody;  // everything but the collapse button
+    QLabel* m_folderName;
+    QToolButton* m_folderToggle;
     QStackedWidget* m_stack;
     QWidget* m_chartPage;
     ShapePalette* m_palette;
@@ -54,7 +71,8 @@ private:
     QToolButton* m_paletteToggle;
     QToolButton* m_shortcutsButton;
     QPointer<QWidget> m_shortcutsPanel;  // open shortcut list, if any
-    QVariantAnimation m_leftAnim, m_rightAnim;  // slide the side panels open/closed
+    QVariantAnimation m_leftAnim, m_rightAnim, m_folderAnim;  // slide the side panels open/closed
+    bool m_folderCollapsed = false;
     QToolButton* m_panelToggle;
     QAction* m_panelAction;
     bool m_paletteCollapsed = false;
@@ -70,31 +88,33 @@ private:
     bool onChart() const;
     void showHome();
     void showChart();
-    ChartTab* tab(int index) const;
-    ChartTab* cur() const;  // current tab; null on the home screen
+    OpenChart* cur() const { return m_cur; }  // null on the home screen or before a folder file is picked
     ChartScene* scene() const;
     ChartView* view() const;
-    int indexOf(const ChartTab* t) const;
-    ChartTab* addTab();
-    void currentTabChanged();
-    void updateTabText(ChartTab* t);
-    bool closeTab(int index);  // asks to save; the last tab closes the window
-    void removeTab(ChartTab* t);
+    OpenChart* findChart(const QString& path) const;
+    OpenChart* addChart();  // new empty Untitled chart, made current
+    void setCurrent(OpenChart* t);
+    void chartStateChanged(OpenChart* t);  // saved/unsaved or path changed
+    void removeChart(OpenChart* t);  // drops it without asking
+    void pathMoved(const QString& from, const QString& to);  // a file or folder was moved/renamed on disk
+    void setFolderCollapsed(bool collapsed, bool animate = true);
     void newChart();
     void openDialog();
-    bool maybeSave(ChartTab* t);
-    bool save(ChartTab* t);
-    bool saveAs(ChartTab* t);
-    bool writeFile(ChartTab* t, const QString& path);
+    void openFolderDialog();
+    bool maybeSave(OpenChart* t);
+    bool save(OpenChart* t);
+    bool saveAs(OpenChart* t);
+    bool writeFile(OpenChart* t, const QString& path);
     void exportChart(bool forLlm = false);  // forLlm: text outline (.md/.txt) instead of an image
     void copy();
     void paste();
     void applyTheme(bool dark);
     void setPaletteCollapsed(bool collapsed, bool animate = true);
+    void setPaletteWidth(int w);
     void updatePanelVisibility();
     void updateTitle();
     void autosave();
     QString autosaveDir() const;
-    void removeRecovery(ChartTab* t);
+    void removeRecovery(OpenChart* t);
     QByteArray thumbnailPng(ChartScene* s);
 };

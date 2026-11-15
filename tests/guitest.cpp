@@ -9,7 +9,11 @@
 #include <QFile>
 #include <QJsonDocument>
 #include <QLineEdit>
+#include <QFileSystemModel>
+#include <QMimeData>
 #include <QTabBar>
+#include <QTreeView>
+#include <memory>
 #include <QTemporaryDir>
 #include <QToolButton>
 #include <QUndoStack>
@@ -45,7 +49,13 @@ int main(int argc, char** argv) {
         HomeScreen home;
         home.refresh();
         CHECK(HomeScreen::recentFiles() == QStringList{kept});
+        // Recent folders: newest first, missing ones dropped.
+        QSettings().setValue("recentFolders", QStringList{dir.filePath("gone")});
+        HomeScreen::addRecentFolder(dir.path());
+        home.refresh();
+        CHECK(HomeScreen::recentFolders() == QStringList{dir.path()});
         QSettings().remove("recent");
+        QSettings().remove("recentFolders");
     }
 
     ChartScene scene;
@@ -429,45 +439,72 @@ int main(int argc, char** argv) {
         CHECK(s.findText.isEmpty());
     }
 
-    // Tabs: one per open file; reopening a file shows its tab; an untouched Untitled tab gives its
-    // place to the next opened file; closing the last tab closes the window.
+    // No tab bar: without a folder, opening a file replaces the current chart. With a folder, the
+    // pane lists its .flowx files; switching keeps unsaved charts loaded (red dot); moving a file
+    // updates the open chart's path; New file lands in the root; Ctrl+Alt+S saves them all.
     {
         QTemporaryDir dir;
+        QDir(dir.path()).mkdir("sub");
         auto writeChart = [&](const QString& name) {
             ChartScene s;
             s.addNode(FlowShape::Process, {0, 0});
             QFile f(dir.filePath(name));
             f.open(QIODevice::WriteOnly);
             f.write(QJsonDocument(s.toJson()).toJson());
-            return f.fileName();
+            return QFileInfo(f.fileName()).absoluteFilePath();
         };
-        const QString a = writeChart("a.flowx"), b = writeChart("b.flowx");
+        const QString a = writeChart("a.flowx"), b = writeChart("sub/b.flowx");
+        QSettings().remove("folderCollapsed");  // pane open, whatever an earlier run left
         MainWindow w;
         w.show();
         CHECK(QTest::qWaitForWindowExposed(&w));
-        auto* bar = w.findChild<QTabBar*>();
-        CHECK(w.openFile(a) && w.openFile(b) && w.tabCount() == 2);
-        CHECK(bar->tabText(0) == "a" && bar->tabText(1) == "b" && bar->currentIndex() == 1);
-        CHECK(w.openFile(a) && w.tabCount() == 2 && bar->currentIndex() == 0);
-        emit bar->tabCloseRequested(1);
-        CHECK(w.tabCount() == 1);
-        QTest::keyClick(&w, Qt::Key_N, Qt::ControlModifier);
-        CHECK(w.tabCount() == 2 && bar->tabText(1) == "Untitled");
-        CHECK(w.openFile(b) && w.tabCount() == 2 && bar->tabText(1) == "b");
-        // Each tab keeps its own undo history; Undo follows the current tab.
-        const auto views = w.findChildren<ChartView*>();
-        CHECK(views.size() == 2);
-        ChartScene *sb = nullptr, *sa = nullptr;
-        for (auto* v : views) (v->isVisible() ? sb : sa) = v->chart();  // b's tab is current
-        CHECK(sa && sb);
-        sb->addNode(FlowShape::Process, {300, 0});
-        CHECK(bar->tabText(1) == "b •" && sa->undoStack()->isClean());
-        sb->undoStack()->undo();
-        CHECK(bar->tabText(1) == "b");
-        emit bar->tabCloseRequested(1);
-        CHECK(w.tabCount() == 1 && w.isVisible());
-        emit bar->tabCloseRequested(0);
-        CHECK(w.tabCount() == 0 && !w.isVisible());
+        CHECK(!w.findChild<QTabBar*>());
+        CHECK(w.openFile(a) && w.openFile(b) && w.chartCount() == 1 && w.currentPath() == b);
+
+        w.openFolder(dir.path());
+        auto* tree = w.findChild<QTreeView*>();
+        auto* model = qobject_cast<QFileSystemModel*>(tree->model());
+        CHECK(tree->isVisible() && model);
+        CHECK(QTest::qWaitFor([&] { return model->rowCount(tree->rootIndex()) == 2; }));  // sub/, a.flowx
+        auto visible = [&] {
+            for (auto* v : w.findChildren<ChartView*>())
+                if (v->isVisible()) return v->chart();
+            return static_cast<ChartScene*>(nullptr);
+        };
+        visible()->addNode(FlowShape::Process, {300, 0});  // b now unsaved
+        CHECK(w.openFile(a) && w.chartCount() == 2 && w.currentPath() == a);
+        CHECK(w.openFile(b) && w.chartCount() == 2 && !visible()->undoStack()->isClean());  // still loaded
+
+        // Drag b from sub/ to the root.
+        const QModelIndex bi = model->index(b);
+        CHECK(bi.isValid());
+        std::unique_ptr<QMimeData> mime(model->mimeData({bi}));
+        CHECK(model->dropMimeData(mime.get(), Qt::MoveAction, -1, -1, tree->rootIndex()));
+        const QString moved = dir.filePath("b.flowx");
+        CHECK(QFileInfo::exists(moved) && !QFileInfo::exists(b) && w.currentPath() == moved);
+
+        CHECK(w.newFileInFolder() && w.chartCount() == 3 && w.currentPath() == dir.filePath("Untitled.flowx"));
+        CHECK(visible()->itemCount() == 0);
+        auto* rename = tree->findChild<QLineEdit*>();  // the inline name editor, open right away
+        CHECK(rename);
+        rename->setText("plan");  // .flowx is added back
+        QTest::keyClick(rename, Qt::Key_Return);
+        CHECK(QTest::qWaitFor([&] { return w.currentPath() == dir.filePath("plan.flowx"); }));
+        visible()->addNode(FlowShape::Process, {0, 0});
+        const QString newPath = w.currentPath();
+        // Collapsing slides the pane down to its » strip; the tree goes only at the end.
+        auto* box = tree->parentWidget()->parentWidget();
+        QTest::keyClick(&w, Qt::Key_B, Qt::ControlModifier | Qt::AltModifier);
+        QTest::qWait(60);
+        CHECK(tree->isVisible() && box->width() < 240 && box->width() > 30);  // mid-slide
+        CHECK(QTest::qWaitFor([&] { return !tree->isVisible() && box->width() == 30; }));
+        QTest::keyClick(&w, Qt::Key_B, Qt::ControlModifier | Qt::AltModifier);
+        CHECK(tree->isVisible());
+        CHECK(QTest::qWaitFor([&] { return box->width() == 240; }));
+        QTest::keyClick(&w, Qt::Key_S, Qt::ControlModifier | Qt::AltModifier);
+        for (auto* v : w.findChildren<ChartView*>()) CHECK(v->chart()->undoStack()->isClean());
+        QFile saved(newPath);
+        CHECK(saved.open(QIODevice::ReadOnly) && QJsonDocument::fromJson(saved.readAll())["nodes"].toArray().size() == 1);
     }
 
     // A blank .flowx (0 bytes, a lone UTF-8 BOM, or only whitespace) opens as an empty chart.
@@ -481,7 +518,7 @@ int main(int argc, char** argv) {
             CHECK(f.open(QIODevice::WriteOnly));
             f.write(content);
             f.close();
-            CHECK(w.openFile(f.fileName()) && w.tabCount() == n);
+            CHECK(w.openFile(f.fileName()) && w.chartCount() == 1);
             const auto views = w.findChildren<ChartView*>();
             for (auto* v : views)
                 if (v->isVisible()) CHECK(v->chart()->itemCount() == 0);

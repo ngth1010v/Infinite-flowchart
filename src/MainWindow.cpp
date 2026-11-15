@@ -10,6 +10,7 @@
 #include <QCursor>
 #include <QDir>
 #include <QFileDialog>
+#include <QFileSystemModel>
 #include <QFileInfo>
 #include <QHBoxLayout>
 #include <QInputDialog>
@@ -20,7 +21,6 @@
 #include <QMessageBox>
 #include <QMimeData>
 #include <QPainter>
-#include <QProxyStyle>
 #include <QRegularExpression>
 #include <QSaveFile>
 #include <QScrollArea>
@@ -31,14 +31,16 @@
 #include <QStatusBar>
 #include <QStyle>
 #include <QStyleHints>
-#include <QTabBar>
+#include <QStyledItemDelegate>
 #include <QToolButton>
+#include <QTreeView>
 #include <QUndoGroup>
 #include <QUndoStack>
+#include <QUrl>
 #include <QUuid>
 
 namespace {
-constexpr int kPaletteOpen = 230, kPaletteClosed = 72, kPanelOpen = 300;
+constexpr int kPaletteOpen = 230, kPaletteClosed = 72, kPanelOpen = 300, kFolderOpen = 240, kFolderClosed = 30;
 const QString kFilter = QObject::tr("Flowchart (*.flowx)");
 
 // Hide selection/hover decorations while rendering to an image or file.
@@ -55,23 +57,75 @@ struct OverlaysHidden {
     }
 };
 
-// Tabs with less room around the name and close button than the style's default.
-class CompactTabStyle : public QProxyStyle {
+bool samePath(const QString& a, const QString& b) { return !a.isEmpty() && !b.isEmpty() && QFileInfo(a) == QFileInfo(b); }
+
+// Files and folders under the open folder. Dropping a row onto a folder (or the empty area: the
+// root) moves it there on disk; renamed files keep their .flowx extension.
+class FolderModel : public QFileSystemModel {
 public:
-    CompactTabStyle() : QProxyStyle(QApplication::style()->name()) {}  // same look as the rest (Fusion)
-    int pixelMetric(PixelMetric m, const QStyleOption* o, const QWidget* w) const override {
-        const int v = QProxyStyle::pixelMetric(m, o, w);
-        return m == PM_TabBarTabHSpace || m == PM_TabBarTabVSpace ? qRound(v * 0.6) : v;
+    std::function<void(const QString& from, const QString& to)> moved;
+    bool dropMimeData(const QMimeData* data, Qt::DropAction, int, int, const QModelIndex& parent) override {
+        QModelIndex dirIndex = parent;
+        if (dirIndex.isValid() && !isDir(dirIndex)) dirIndex = dirIndex.parent();  // dropped on a file: its folder
+        const QString dir = dirIndex.isValid() ? filePath(dirIndex) : rootPath();
+        bool any = false;
+        for (const QUrl& u : data->urls()) {
+            const QString from = QFileInfo(u.toLocalFile()).absoluteFilePath();
+            const QString to = QDir(dir).filePath(QFileInfo(from).fileName());
+            // Same place, into itself, or a name already taken there: leave it.
+            if (samePath(QFileInfo(from).absolutePath(), dir) || (dir + '/').startsWith(from + '/', Qt::CaseInsensitive) ||
+                QFileInfo::exists(to) || !QDir().rename(from, to))
+                continue;
+            moved(from, to);
+            any = true;
+        }
+        return any;
+    }
+    bool setData(const QModelIndex& index, const QVariant& value, int role) override {
+        QString name = value.toString().trimmed();
+        if (role == Qt::EditRole && !isDir(index) && !name.endsWith(".flowx", Qt::CaseInsensitive)) name += ".flowx";
+        return QFileSystemModel::setData(index, name, role);
     }
 };
 
-// Its default minimum width keeps room for the scroll arrows, wider than a single tab, and layouts
-// never go below it: that left a gap before '+'. Now the bar is as wide as its tabs.
-class TabBar : public QTabBar {
+// No branch arrows on the left: folders show a caret on the right of their row instead.
+class FolderTree : public QTreeView {
+protected:
+    void drawBranches(QPainter*, const QRect&, const QModelIndex&) const override {}
+};
+
+// Right edge of each row: a caret on folders, a red dot on files with unsaved changes.
+class FolderDelegate : public QStyledItemDelegate {
 public:
-    QSize minimumSizeHint() const override {
-        const QSize s = QTabBar::minimumSizeHint();
-        return {qMin(s.width(), sizeHint().width()), s.height()};
+    std::function<bool(const QString& path)> unsaved;
+    using QStyledItemDelegate::QStyledItemDelegate;
+    void paint(QPainter* p, const QStyleOptionViewItem& opt, const QModelIndex& index) const override {
+        QStyle* style = opt.widget->style();
+        QStyleOptionViewItem bg = opt;  // selection/hover background across the whole row
+        initStyleOption(&bg, index);
+        bg.text.clear();
+        bg.icon = QIcon();
+        style->drawControl(QStyle::CE_ItemViewItem, &bg, p, opt.widget);
+        QStyleOptionViewItem left = opt;
+        left.rect.setRight(opt.rect.right() - 18);
+        QStyledItemDelegate::paint(p, left, index);
+        const QRect mark(opt.rect.right() - 16, opt.rect.top(), 14, opt.rect.height());
+        const auto* model = static_cast<const QFileSystemModel*>(index.model());
+        if (model->isDir(index)) {
+            QStyleOption a;
+            a.rect = mark;
+            a.palette = opt.palette;
+            a.state = opt.state;
+            const bool open = static_cast<const QTreeView*>(opt.widget)->isExpanded(index);
+            style->drawPrimitive(open ? QStyle::PE_IndicatorArrowDown : QStyle::PE_IndicatorArrowRight, &a, p, opt.widget);
+        } else if (unsaved(model->filePath(index))) {
+            p->save();
+            p->setRenderHint(QPainter::Antialiasing);
+            p->setPen(Qt::NoPen);
+            p->setBrush(opt.state & QStyle::State_Selected ? opt.palette.highlightedText() : opt.palette.text());  // black; white in dark theme
+            p->drawEllipse(QPointF(mark.center()) + QPointF(0.5, 0.5), 3.2, 3.2);
+            p->restore();
+        }
     }
 };
 
@@ -111,12 +165,21 @@ MainWindow::MainWindow() {
     m_panelScroll->setFixedWidth(0);
     m_panelScroll->hide();
 
-    for (auto* a : {&m_leftAnim, &m_rightAnim}) {
-        a->setDuration(180);
-        a->setEasingCurve(QEasingCurve::OutCubic);
+    // CSS "ease": cubic-bezier(0.25, 0.1, 0.25, 1).
+    QEasingCurve ease(QEasingCurve::BezierSpline);
+    ease.addCubicBezierSegment(QPointF(0.25, 0.1), QPointF(0.25, 1), QPointF(1, 1));
+    for (auto* a : {&m_leftAnim, &m_rightAnim, &m_folderAnim}) {
+        a->setDuration(220);
+        a->setEasingCurve(ease);
     }
+    connect(&m_folderAnim, &QVariantAnimation::valueChanged, this,
+            [this](const QVariant& v) { m_folderBox->setFixedWidth(v.toInt()); });
+    connect(&m_folderAnim, &QVariantAnimation::finished, this, [this] {
+        m_folderBody->setVisible(!m_folderCollapsed);  // the tree only goes once the pane is narrow
+        m_folderName->setVisible(!m_folderCollapsed);
+    });
     connect(&m_leftAnim, &QVariantAnimation::valueChanged, this,
-            [this](const QVariant& v) { m_paletteBox->setFixedWidth(v.toInt()); });
+            [this](const QVariant& v) { setPaletteWidth(v.toInt()); });
     connect(&m_leftAnim, &QVariantAnimation::finished, this, [this] { m_palette->setCompact(m_paletteCollapsed); });
     connect(&m_rightAnim, &QVariantAnimation::valueChanged, this, [this](const QVariant& v) {
         m_panelScroll->setFixedWidth(v.toInt());
@@ -133,46 +196,93 @@ MainWindow::MainWindow() {
     sl->addWidget(m_panelToggle);
     sl->addStretch();
 
-    // Tab bar across the top, like a browser: one tab per open chart, '+' opens more.
-    m_tabs = new TabBar;
-    m_tabs->setTabsClosable(true);
-    m_tabs->setMovable(true);
-    m_tabs->setDocumentMode(true);
-    m_tabs->setExpanding(false);
-    m_tabs->setUsesScrollButtons(true);
-    m_tabs->setElideMode(Qt::ElideRight);
-    m_tabs->setFocusPolicy(Qt::NoFocus);
-    auto* tabStyle = new CompactTabStyle;
-    tabStyle->setParent(m_tabs);
-    m_tabs->setStyle(tabStyle);
-    auto* plus = new QToolButton;
-    plus->setText(QStringLiteral("+"));
-    plus->setFixedSize(22, 22);  // shorter than the tabs, so the row stays as tall as the tab bar
-    plus->setToolTip(tr("Open charts in new tabs (Ctrl+O)"));
-    QFont pf = plus->font();
-    pf.setPointSizeF(pf.pointSizeF() * 1.3);
-    plus->setFont(pf);
-    connect(plus, &QToolButton::clicked, this, &MainWindow::openDialog);
-    auto* tabRow = new QHBoxLayout;
-    tabRow->setContentsMargins(0, 0, 0, 0);
-    tabRow->setSpacing(3);
-    tabRow->addWidget(m_tabs, 0, Qt::AlignTop);
-    tabRow->addWidget(plus, 0, Qt::AlignVCenter);
-    tabRow->addStretch(1);
+    // Folder pane on the far left, shown while a folder is open: its .flowx files as a tree.
+    m_fsModel = new FolderModel;
+    m_fsModel->setParent(this);
+    m_fsModel->setReadOnly(false);  // inline rename (F2) and drag/drop moves
+    m_fsModel->setNameFilters({"*.flowx"});
+    m_fsModel->setNameFilterDisables(false);  // hide other files instead of greying them out
+    static_cast<FolderModel*>(m_fsModel)->moved = [this](const QString& from, const QString& to) { pathMoved(from, to); };
+    connect(m_fsModel, &QFileSystemModel::fileRenamed, this,
+            [this](const QString& dir, const QString& from, const QString& to) { pathMoved(dir + '/' + from, dir + '/' + to); });
+    m_tree = new FolderTree;
+    m_tree->setModel(m_fsModel);
+    for (int c = 1; c < m_fsModel->columnCount(); ++c) m_tree->hideColumn(c);  // name only
+    m_tree->setHeaderHidden(true);
+    m_tree->setRootIsDecorated(false);
+    m_tree->setExpandsOnDoubleClick(false);  // a single click toggles a folder
+    m_tree->setEditTriggers(QAbstractItemView::EditKeyPressed);
+    m_tree->setDragDropMode(QAbstractItemView::DragDrop);
+    m_tree->setDefaultDropAction(Qt::MoveAction);
+    m_tree->setFrameShape(QFrame::NoFrame);
+    auto* delegate = new FolderDelegate(m_tree);
+    delegate->unsaved = [this](const QString& path) {
+        const OpenChart* t = findChart(path);
+        return t && !t->scene->undoStack()->isClean();
+    };
+    m_tree->setItemDelegate(delegate);
+    connect(m_tree, &QTreeView::clicked, this, [this](const QModelIndex& i) {
+        if (m_fsModel->isDir(i)) m_tree->setExpanded(i, !m_tree->isExpanded(i));
+        else openFile(m_fsModel->filePath(i));
+    });
+    m_folderName = new QLabel;
+    QFont fnf = m_folderName->font();
+    fnf.setBold(true);
+    m_folderName->setFont(fnf);
+    m_folderName->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);  // long names never push » out while sliding
+    m_folderToggle = new QToolButton;
+    m_folderToggle->setAutoRaise(true);
+    m_folderToggle->setToolTip(tr("Show/hide folder pane (Ctrl+Alt+B)"));
+    connect(m_folderToggle, &QToolButton::clicked, this, [this] { setFolderCollapsed(!m_folderCollapsed); });
+    auto* newFile = new QToolButton;
+    newFile->setText(tr("+  New file"));
+    newFile->setToolTip(tr("New chart in the folder root (Ctrl+N)"));
+    newFile->setAutoRaise(true);
+    newFile->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    connect(newFile, &QToolButton::clicked, this, &MainWindow::newFileInFolder);
+    m_folderBody = new QWidget;
+    auto* fbl = new QVBoxLayout(m_folderBody);
+    fbl->setContentsMargins(0, 0, 0, 0);
+    fbl->addWidget(m_tree, 1);
+    fbl->addWidget(newFile);
+    m_folderBody->setMinimumWidth(kFolderOpen - 6);  // keeps its width and is clipped while sliding
+    m_folderBox = new QWidget;
+    auto* fl = new QVBoxLayout(m_folderBox);
+    fl->setContentsMargins(4, 4, 2, 4);
+    fl->setSpacing(2);
+    auto* fhead = new QHBoxLayout;
+    fhead->addWidget(m_folderName, 1);
+    fhead->addWidget(m_folderToggle, 0, Qt::AlignRight);
+    fl->addLayout(fhead);
+    fl->addWidget(m_folderBody, 1);
+    fl->addStretch();  // collapsed: keeps the » button at the top instead of floating mid-height
+    m_folderBox->hide();
+    m_folderGap = new QWidget;  // window-colored strip between the folder pane and the shape pane
+    m_folderGap->setFixedWidth(6);
+    m_folderGap->hide();
+    // Both side panes (header, buttons and all) use the list color, not the window color.
+    for (QWidget* box : {m_folderBox, m_paletteBox}) {
+        box->setAutoFillBackground(true);
+        box->setBackgroundRole(QPalette::Base);
+    }
+
+    auto* noChart = new QLabel(tr("Pick a chart on the left, or create one with + New file."));
+    noChart->setAlignment(Qt::AlignCenter);
+    noChart->setEnabled(false);
+    m_noChart = noChart;
+    m_views->addWidget(m_noChart);
 
     auto* h = new QHBoxLayout;
     h->setContentsMargins(0, 0, 0, 0);
     h->setSpacing(0);
+    h->addWidget(m_folderBox);
+    h->addWidget(m_folderGap);
     h->addWidget(m_paletteBox);
     h->addWidget(m_views, 1);
     h->addWidget(m_panelScroll);
     h->addWidget(panelStrip);
     m_chartPage = new QWidget;
-    auto* v = new QVBoxLayout(m_chartPage);
-    v->setContentsMargins(0, 0, 0, 0);
-    v->setSpacing(0);
-    v->addLayout(tabRow);
-    v->addLayout(h, 1);
+    m_chartPage->setLayout(h);
 
     m_home = new HomeScreen;
     m_stack = new QStackedWidget;
@@ -188,6 +298,10 @@ MainWindow::MainWindow() {
     buildMenus();
 
     connect(m_home, &HomeScreen::newRequested, this, &MainWindow::newChart);
+    connect(m_home, &HomeScreen::openFolderRequested, this, [this](const QString& p) {
+        if (p.isEmpty()) openFolderDialog();
+        else openFolder(p);
+    });
     connect(m_home, &HomeScreen::openRequested, this, [this](const QString& p) {
         if (p.isEmpty()) openDialog();
         else openFile(p);
@@ -198,8 +312,6 @@ MainWindow::MainWindow() {
         view()->setFocus();
     });
     connect(m_panelToggle, &QToolButton::clicked, m_panelAction, &QAction::toggle);
-    connect(m_tabs, &QTabBar::currentChanged, this, &MainWindow::currentTabChanged);
-    connect(m_tabs, &QTabBar::tabCloseRequested, this, &MainWindow::closeTab);
 
     m_autosave.setInterval(QSettings().value("autosaveMinutes", 1).toInt() * 60'000);
     connect(&m_autosave, &QTimer::timeout, this, &MainWindow::autosave);
@@ -207,6 +319,7 @@ MainWindow::MainWindow() {
 
     applyTheme(QSettings().value("dark", false).toBool());
     setPaletteCollapsed(QSettings().value("paletteCollapsed", false).toBool(), false);
+    setFolderCollapsed(QSettings().value("folderCollapsed", false).toBool(), false);
     showHome();
 }
 
@@ -225,8 +338,10 @@ void MainWindow::buildMenus() {
     auto* file = menuBar()->addMenu(tr("&File"));
     makeAction(file, tr("&New chart"), {QKeySequence::New}, [this] { newChart(); }, false);
     makeAction(file, tr("&Open…"), {QKeySequence::Open}, [this] { openDialog(); }, false);
+    makeAction(file, tr("Open &folder…"), {QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_O)}, [this] { openFolderDialog(); }, false);
     file->addSeparator();
     makeAction(file, tr("&Save"), {QKeySequence::Save}, [this] { save(cur()); });
+    makeAction(file, tr("Save a&ll"), {QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_S)}, [this] { saveAll(); }, false);
     makeAction(file, tr("Save &as…"), {QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_S)}, [this] { saveAs(cur()); });
     makeAction(file, tr("&Export as PNG / SVG / PDF…"), {QKeySequence(Qt::CTRL | Qt::Key_E)}, [this] { exportChart(); });
     makeAction(file, tr("Export for &LLM (text)…"), {QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_E)},
@@ -240,7 +355,6 @@ void MainWindow::buildMenus() {
         m_autosave.start(min * 60'000);
     }, false);
     file->addSeparator();
-    makeAction(file, tr("&Close tab"), {QKeySequence(Qt::CTRL | Qt::Key_W)}, [this] { closeTab(m_tabs->currentIndex()); });
     makeAction(file, tr("E&xit"), {QKeySequence(Qt::ALT | Qt::Key_F4)}, [this] { close(); }, false);
 
     auto* edit = menuBar()->addMenu(tr("&Edit"));
@@ -288,7 +402,7 @@ void MainWindow::buildMenus() {
     m_snap = snap->isChecked();
     connect(snap, &QAction::toggled, this, [this](bool on) {
         m_snap = on;
-        for (int i = 0; i < m_tabs->count(); ++i) tab(i)->scene->snapEnabled = on;
+        for (auto* t : std::as_const(m_charts)) t->scene->snapEnabled = on;
         QSettings().setValue("snap", on);
     });
     auto* minimap = makeAction(viewMenu, tr("&Minimap"), {}, [] {});
@@ -297,7 +411,7 @@ void MainWindow::buildMenus() {
     m_minimap = minimap->isChecked();
     connect(minimap, &QAction::toggled, this, [this](bool on) {
         m_minimap = on;
-        for (int i = 0; i < m_tabs->count(); ++i) tab(i)->view->setMinimapVisible(on);
+        for (auto* t : std::as_const(m_charts)) t->view->setMinimapVisible(on);
         QSettings().setValue("minimap", on);
     });
     minimap->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_M));
@@ -311,11 +425,8 @@ void MainWindow::buildMenus() {
         m_panelToggle->setText(on ? QStringLiteral("»") : QStringLiteral("«"));
         updatePanelVisibility();
     });
-    viewMenu->addSeparator();
-    makeAction(viewMenu, tr("&Next tab"), {QKeySequence(Qt::CTRL | Qt::Key_Tab)},
-               [this] { m_tabs->setCurrentIndex((m_tabs->currentIndex() + 1) % m_tabs->count()); });
-    makeAction(viewMenu, tr("&Previous tab"), {QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_Tab)},
-               [this] { m_tabs->setCurrentIndex((m_tabs->currentIndex() + m_tabs->count() - 1) % m_tabs->count()); });
+    makeAction(viewMenu, tr("F&older pane"), {QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_B)},
+               [this] { setFolderCollapsed(!m_folderCollapsed); }, false);
     viewMenu->addSeparator();
     auto* dark =makeAction(viewMenu, tr("&Dark theme"), {}, [] {}, false);
     dark->setCheckable(true);
@@ -403,7 +514,7 @@ void MainWindow::resizeEvent(QResizeEvent* e) {
     if (m_shortcutsPanel) m_shortcutsPanel->setGeometry(rect());
 }
 
-// ---------------------------------------------------------------- screens & tabs
+// ---------------------------------------------------------------- screens & charts
 
 bool MainWindow::onChart() const { return m_stack->currentWidget() == m_chartPage; }
 
@@ -423,30 +534,23 @@ void MainWindow::showHome() {
 void MainWindow::showChart() {
     if (onChart()) return;
     m_stack->setCurrentWidget(m_chartPage);
-    for (auto* a : std::as_const(m_chartActions)) a->setEnabled(true);
     statusBar()->show();
+    setCurrent(m_cur);  // enables the chart actions if there is a chart
     updatePanelVisibility();  // reopen the style panel if it was open
 }
 
-int MainWindow::tabCount() const { return m_tabs->count(); }
+QString MainWindow::currentPath() const { return m_cur ? m_cur->path : QString(); }
+ChartScene* MainWindow::scene() const { return m_cur ? m_cur->scene : nullptr; }
+ChartView* MainWindow::view() const { return m_cur ? m_cur->view : nullptr; }
 
-ChartTab* MainWindow::tab(int index) const {
-    return static_cast<ChartTab*>(m_tabs->tabData(index).value<void*>());
+OpenChart* MainWindow::findChart(const QString& path) const {
+    for (auto* t : m_charts)
+        if (samePath(t->path, path)) return t;
+    return nullptr;
 }
 
-ChartTab* MainWindow::cur() const { return m_tabs->count() ? tab(m_tabs->currentIndex()) : nullptr; }
-ChartScene* MainWindow::scene() const { return cur() ? cur()->scene : nullptr; }
-ChartView* MainWindow::view() const { return cur() ? cur()->view : nullptr; }
-
-int MainWindow::indexOf(const ChartTab* t) const {
-    for (int i = 0; i < m_tabs->count(); ++i)
-        if (tab(i) == t) return i;
-    return -1;
-}
-
-// New empty Untitled tab, made current.
-ChartTab* MainWindow::addTab() {
-    auto* t = new ChartTab;
+OpenChart* MainWindow::addChart() {
+    auto* t = new OpenChart;
     t->scene = new ChartScene(this);
     t->scene->snapEnabled = m_snap;
     t->view = new ChartView(t->scene);
@@ -454,88 +558,154 @@ ChartTab* MainWindow::addTab() {
     t->view->setMinimapVisible(m_minimap);
     m_views->addWidget(t->view);
     m_undoGroup->addStack(t->scene->undoStack());
-    connect(t->scene->undoStack(), &QUndoStack::cleanChanged, this, [this, t] {
-        updateTabText(t);
-        if (t == cur()) updateTitle();
-    });
+    connect(t->scene->undoStack(), &QUndoStack::cleanChanged, this, [this, t] { chartStateChanged(t); });
     connect(t->view, &ChartView::zoomChanged, this, [this, t](double z) {
-        if (t == cur()) m_zoomLabel->setText(QStringLiteral("%1%").arg(qRound(z * 100)));
+        if (t == m_cur) m_zoomLabel->setText(QStringLiteral("%1%").arg(qRound(z * 100)));
     });
-    const int i = m_tabs->addTab(QString());
-    m_tabs->setTabData(i, QVariant::fromValue<void*>(t));
-    updateTabText(t);
+    m_charts << t;
     showChart();
-    m_tabs->setCurrentIndex(i);
-    currentTabChanged();  // also for the first tab, which QTabBar made current before its data was set
+    setCurrent(t);
     return t;
 }
 
-void MainWindow::currentTabChanged() {
-    ChartTab* t = cur();
-    if (!t) return;
+void MainWindow::setCurrent(OpenChart* t) {
+    m_cur = t;
+    for (auto* a : std::as_const(m_chartActions)) a->setEnabled(t && onChart());
+    m_panel->setScene(t ? t->scene : nullptr);
+    m_find->setView(t ? t->view : nullptr);
+    if (!t) {
+        m_find->close();
+        m_views->setCurrentWidget(m_noChart);
+        m_zoomLabel->clear();
+        m_tree->clearSelection();
+        updateTitle();
+        return;
+    }
     m_views->setCurrentWidget(t->view);
     m_undoGroup->setActiveStack(t->scene->undoStack());
-    m_panel->setScene(t->scene);
-    m_find->setView(t->view);
     m_zoomLabel->setText(QStringLiteral("%1%").arg(qRound(t->view->zoom() * 100)));
     t->view->setFocus();
     m_pasteCount = 0;
+    if (!m_folder.isEmpty()) {  // highlight its row (if it lives in the folder)
+        const QModelIndex i = t->path.isEmpty() ? QModelIndex() : m_fsModel->index(t->path);
+        if (i.isValid()) m_tree->setCurrentIndex(i);
+        else m_tree->clearSelection();
+    }
     updateTitle();
 }
 
-void MainWindow::updateTabText(ChartTab* t) {
-    const int i = indexOf(t);
-    if (i < 0) return;
-    const QString name = t->path.isEmpty() ? tr("Untitled") : QFileInfo(t->path).completeBaseName();
-    m_tabs->setTabText(i, t->scene->undoStack()->isClean() ? name : name + QStringLiteral(" •"));
-    m_tabs->setTabToolTip(i, t->path.isEmpty() ? tr("Not saved yet") : QDir::toNativeSeparators(t->path));
+void MainWindow::chartStateChanged(OpenChart* t) {
+    m_tree->viewport()->update();  // red dots
+    if (t == m_cur) updateTitle();
 }
 
-bool MainWindow::closeTab(int index) {
-    ChartTab* t = tab(index);
-    if (!t) return false;
-    m_tabs->setCurrentIndex(index);  // show the chart the save question is about
-    if (!maybeSave(t)) return false;
-    removeRecovery(t);
-    const bool last = m_tabs->count() == 1;
-    removeTab(t);
-    if (last) close();  // there is always at least one tab: closing the last one closes the app
-    return true;
-}
-
-// Drops the tab without asking.
-void MainWindow::removeTab(ChartTab* t) {
-    if (m_tabs->count() == 1) {  // no other chart for the panels to follow
-        m_panel->setScene(nullptr);
-        m_find->setView(nullptr);
-    }
-    m_tabs->removeTab(indexOf(t));  // makes a neighbour current; currentTabChanged retargets the panels
+void MainWindow::removeChart(OpenChart* t) {
+    m_charts.removeOne(t);
+    if (t == m_cur) setCurrent(nullptr);
     m_undoGroup->removeStack(t->scene->undoStack());
     delete t->view;
     delete t->scene;
     delete t;
 }
 
+void MainWindow::pathMoved(const QString& from, const QString& to) {
+    for (auto* t : std::as_const(m_charts)) {
+        if (samePath(t->path, from)) t->path = QFileInfo(to).absoluteFilePath();
+        else if (t->path.startsWith(from + '/', Qt::CaseInsensitive))  // inside a moved folder
+            t->path = QFileInfo(to + t->path.mid(from.size())).absoluteFilePath();
+        else continue;
+        chartStateChanged(t);
+    }
+}
+
 void MainWindow::newChart() {
-    ChartTab* t = addTab();
+    if (!m_folder.isEmpty()) {
+        newFileInFolder();
+        return;
+    }
+    if (!maybeSave(m_cur)) return;
+    OpenChart* old = m_cur;
+    if (old) removeRecovery(old);
+    OpenChart* t = addChart();
+    if (old) removeChart(old);
     t->view->resetView();
 }
 
+bool MainWindow::newFileInFolder() {
+    if (m_folder.isEmpty()) return false;
+    QString path = QDir(m_folder).filePath(tr("Untitled") + ".flowx");
+    for (int n = 2; QFileInfo::exists(path); ++n) path = QDir(m_folder).filePath(tr("Untitled %1").arg(n) + ".flowx");
+    QSaveFile f(path);
+    if (!f.open(QIODevice::WriteOnly) || f.write(QJsonDocument(QJsonObject{{"format", "flowx"}, {"version", 1}}).toJson()) < 0 ||
+        !f.commit()) {
+        QMessageBox::warning(this, tr("New file"), tr("Cannot create %1:\n%2").arg(QDir::toNativeSeparators(path), f.errorString()));
+        return false;
+    }
+    if (!openFile(path)) return false;
+    const QModelIndex i = m_fsModel->index(path);
+    if (i.isValid()) {
+        m_tree->setCurrentIndex(i);
+        m_tree->edit(i);  // name it right away; Esc keeps "Untitled"
+    }
+    return true;
+}
+
 void MainWindow::openDialog() {
-    const QString dir = cur() && !cur()->path.isEmpty() ? QFileInfo(cur()->path).absolutePath()
+    const QString dir = m_cur && !m_cur->path.isEmpty() ? QFileInfo(m_cur->path).absolutePath()
                                                         : QSettings().value("lastDir").toString();
-    const QStringList paths =
-        QFileDialog::getOpenFileNames(this, tr("Open charts"), dir, kFilter + ";;" + tr("All files (*)"));
-    for (const QString& p : paths) openFile(p);
+    const QString path = QFileDialog::getOpenFileName(this, tr("Open chart"), dir, kFilter + ";;" + tr("All files (*)"));
+    if (!path.isEmpty()) openFile(path);
+}
+
+void MainWindow::openFolderDialog() {
+    const QString dir = QFileDialog::getExistingDirectory(this, tr("Open folder"),
+                                                          m_folder.isEmpty() ? QSettings().value("lastDir").toString() : m_folder);
+    if (!dir.isEmpty()) openFolder(dir);
+}
+
+// ponytail: charts opened earlier stay loaded when another folder is opened (dirty ones are still
+// asked about on exit). Drop clean charts from outside the new folder if memory ever matters.
+void MainWindow::openFolder(const QString& dir) {
+    m_folder = QFileInfo(dir).absoluteFilePath();
+    QSettings().setValue("lastDir", m_folder);
+    HomeScreen::addRecentFolder(m_folder);
+    m_tree->setRootIndex(m_fsModel->setRootPath(m_folder));
+    m_folderName->setText(QDir(m_folder).dirName());
+    m_folderName->setToolTip(QDir::toNativeSeparators(m_folder));
+    m_folderBox->show();
+    m_folderGap->show();
+    showChart();
+    setCurrent(m_cur);  // select its row if it is in this folder
+}
+
+void MainWindow::setFolderCollapsed(bool collapsed, bool animate) {
+    m_folderCollapsed = collapsed;
+    QSettings().setValue("folderCollapsed", collapsed);
+    m_folderToggle->setText(collapsed ? QStringLiteral("»") : QStringLiteral("«"));
+    if (!collapsed) {  // tree back before growing; hidden after shrinking
+        m_folderBody->show();
+        m_folderName->show();
+    }
+    const int to = collapsed ? kFolderClosed : kFolderOpen;
+    m_folderAnim.stop();
+    if (!animate || !m_folderBox->isVisible()) {
+        m_folderBox->setFixedWidth(to);
+        m_folderBody->setVisible(!collapsed);
+        m_folderName->setVisible(!collapsed);
+        return;
+    }
+    m_folderAnim.setStartValue(m_folderBox->width());
+    m_folderAnim.setEndValue(to);
+    m_folderAnim.start();
 }
 
 bool MainWindow::openFile(const QString& path) {
     const QString abs = QFileInfo(path).absoluteFilePath();
-    for (int i = 0; i < m_tabs->count(); ++i)
-        if (!tab(i)->path.isEmpty() && QFileInfo(tab(i)->path) == QFileInfo(abs)) {  // already open: show it
-            m_tabs->setCurrentIndex(i);
-            return true;
-        }
+    if (OpenChart* t = findChart(abs)) {  // already loaded: show it
+        showChart();
+        setCurrent(t);
+        return true;
+    }
     QFile f(path);
     if (!f.open(QIODevice::ReadOnly)) {
         QMessageBox::warning(this, tr("Cannot open chart"), tr("Cannot open %1:\n%2").arg(QDir::toNativeSeparators(path), f.errorString()));
@@ -558,35 +728,50 @@ bool MainWindow::openFile(const QString& path) {
         QMessageBox::warning(this, tr("Cannot open chart"), tr("This file was made by a newer version of Flowchart."));
         return false;
     }
-    // An empty Untitled tab nobody touched (e.g. right after Ctrl+N) gives its place to the file.
-    ChartTab* blank = cur();
-    if (blank && !(blank->path.isEmpty() && blank->scene->itemCount() == 0 && blank->scene->undoStack()->count() == 0))
-        blank = nullptr;
-    ChartTab* t = addTab();
+    // Without a folder the file replaces the current chart. With one, the current chart stays
+    // loaded, unless it is an empty Untitled chart nobody touched (e.g. right after Ctrl+N).
+    OpenChart* old = m_cur;
+    if (old && !m_folder.isEmpty() &&
+        !(old->path.isEmpty() && old->scene->itemCount() == 0 && old->scene->undoStack()->count() == 0))
+        old = nullptr;
+    if (old && m_folder.isEmpty()) {
+        if (!maybeSave(old)) return false;
+        removeRecovery(old);
+    }
+    OpenChart* t = addChart();
     t->scene->fromJson(o);
     t->path = abs;
     QSettings().setValue("lastDir", QFileInfo(abs).absolutePath());
     HomeScreen::addRecent(abs);
     if (o.contains("view")) t->view->setViewState(o["view"].toObject());
     else QTimer::singleShot(0, t->view, &ChartView::fitAll);  // after layout gives the view its size
-    if (blank) removeTab(blank);
-    updateTabText(t);
-    updateTitle();
+    if (old) removeChart(old);
+    setCurrent(t);  // now with its path: selects its row
     return true;
 }
 
 void MainWindow::closeEvent(QCloseEvent* e) {
-    for (int i = 0; i < m_tabs->count(); ++i) {
-        if (tab(i)->scene->undoStack()->isClean()) continue;
-        m_tabs->setCurrentIndex(i);  // show the chart the save question is about
-        if (!maybeSave(tab(i))) return e->ignore();
+    for (auto* t : std::as_const(m_charts)) {
+        if (t->scene->undoStack()->isClean()) continue;
+        setCurrent(t);  // show the chart the save question is about
+        if (!maybeSave(t)) return e->ignore();
     }
-    for (int i = 0; i < m_tabs->count(); ++i) removeRecovery(tab(i));
+    for (auto* t : std::as_const(m_charts)) removeRecovery(t);
     e->accept();
 }
 
+void MainWindow::saveAll() {
+    OpenChart* was = m_cur;
+    for (auto* t : std::as_const(m_charts))
+        if (!t->scene->undoStack()->isClean()) {
+            if (t->path.isEmpty()) setCurrent(t);  // Save as asks for a name: show which chart
+            if (!save(t)) break;
+        }
+    if (m_cur != was) setCurrent(was);
+}
+
 void MainWindow::updateTitle() {
-    ChartTab* t = onChart() ? cur() : nullptr;
+    OpenChart* t = onChart() ? m_cur : nullptr;
     if (!t) {
         setWindowTitle(tr("Flowchart"));
         setWindowModified(false);
@@ -599,7 +784,7 @@ void MainWindow::updateTitle() {
 
 // ---------------------------------------------------------------- saving
 
-bool MainWindow::maybeSave(ChartTab* t) {
+bool MainWindow::maybeSave(OpenChart* t) {
     if (!t || t->scene->undoStack()->isClean()) return true;
     const QString name = t->path.isEmpty() ? tr("Untitled") : QFileInfo(t->path).fileName();
     const auto r = QMessageBox::warning(this, tr("Unsaved changes"), tr("Save changes to \"%1\"?").arg(name),
@@ -608,12 +793,12 @@ bool MainWindow::maybeSave(ChartTab* t) {
     return r == QMessageBox::Discard;
 }
 
-bool MainWindow::save(ChartTab* t) {
+bool MainWindow::save(OpenChart* t) {
     if (!t) return false;
     return t->path.isEmpty() ? saveAs(t) : writeFile(t, t->path);
 }
 
-bool MainWindow::saveAs(ChartTab* t) {
+bool MainWindow::saveAs(OpenChart* t) {
     if (!t) return false;
     const QString start = t->path.isEmpty()
                               ? QDir(QSettings().value("lastDir", QDir::homePath()).toString()).filePath(tr("Untitled.flowx"))
@@ -624,7 +809,7 @@ bool MainWindow::saveAs(ChartTab* t) {
     return writeFile(t, path);
 }
 
-bool MainWindow::writeFile(ChartTab* t, const QString& path) {
+bool MainWindow::writeFile(OpenChart* t, const QString& path) {
     QJsonObject o = t->scene->toJson();
     o["view"] = t->view->viewState();
     o["thumb"] = QString::fromLatin1(thumbnailPng(t->scene).toBase64());
@@ -638,8 +823,7 @@ bool MainWindow::writeFile(ChartTab* t, const QString& path) {
     t->scene->undoStack()->setClean();
     removeRecovery(t);
     HomeScreen::addRecent(t->path);
-    updateTabText(t);
-    if (t == cur()) updateTitle();
+    chartStateChanged(t);
     return true;
 }
 
@@ -666,15 +850,14 @@ QByteArray MainWindow::thumbnailPng(ChartScene* s) {
 // Add a lock file per instance if that becomes a real workflow.
 QString MainWindow::autosaveDir() const { return QStandardPaths::writableLocation(QStandardPaths::AppDataLocation); }
 
-void MainWindow::removeRecovery(ChartTab* t) {
+void MainWindow::removeRecovery(OpenChart* t) {
     if (t->recovery.isEmpty()) return;
     QFile::remove(t->recovery);
     t->recovery.clear();
 }
 
 void MainWindow::autosave() {
-    for (int i = 0; i < m_tabs->count(); ++i) {
-        ChartTab* t = tab(i);
+    for (auto* t : std::as_const(m_charts)) {
         if (t->scene->undoStack()->isClean()) continue;
         if (!t->path.isEmpty() && writeFile(t, t->path)) continue;  // saved chart: write the file itself
         // Untitled (or the write failed): keep a recovery copy instead.
@@ -704,13 +887,15 @@ void MainWindow::start(const QString& fileArg) {
             if (answer == QMessageBox::Yes && f.open(QIODevice::ReadOnly)) {
                 const QJsonObject o = QJsonDocument::fromJson(f.readAll()).object();
                 f.close();
-                ChartTab* t = addTab();
+                // ponytail: without a folder only the last recovered chart is shown; the others stay
+                // loaded and are asked about on exit. Add a picker if several recoveries become common.
+                OpenChart* t = addChart();
                 t->scene->fromJson(o);
                 t->path = o["origPath"].toString();
-                t->recovery = fi.absoluteFilePath();  // kept until this tab is saved or closed
+                t->recovery = fi.absoluteFilePath();  // kept until this chart is saved or closed
                 t->view->setViewState(o["view"].toObject());
                 t->scene->undoStack()->resetClean();  // recovered work counts as unsaved
-                updateTabText(t);
+                chartStateChanged(t);
             } else {
                 f.remove();
             }
@@ -790,7 +975,7 @@ void MainWindow::applyTheme(bool dark) {
     QGuiApplication::styleHints()->setColorScheme(dark ? Qt::ColorScheme::Dark : Qt::ColorScheme::Light);
     QApplication::setPalette(QApplication::style()->standardPalette());
     m_dark = dark;
-    for (int i = 0; i < m_tabs->count(); ++i) tab(i)->view->setDark(dark);
+    for (auto* t : std::as_const(m_charts)) t->view->setDark(dark);
     m_palette->rebuildIcons(QApplication::palette().color(QPalette::Text));
     QSettings().setValue("dark", dark);
     if (!onChart()) m_home->refresh();
@@ -807,13 +992,19 @@ void MainWindow::setPaletteCollapsed(bool collapsed, bool animate) {
     const int to = collapsed ? kPaletteClosed : kPaletteOpen;
     m_leftAnim.stop();
     if (!animate) {
-        m_paletteBox->setFixedWidth(to);
+        setPaletteWidth(to);
         m_palette->setCompact(collapsed);
         return;
     }
     m_leftAnim.setStartValue(m_paletteBox->width());
     m_leftAnim.setEndValue(to);
     m_leftAnim.start();
+}
+
+// Section titles shrink smoothly with the panel: full size open, 75% (fits "Containers") collapsed.
+void MainWindow::setPaletteWidth(int w) {
+    m_paletteBox->setFixedWidth(w);
+    m_palette->setHeaderScale(0.75 + 0.25 * (w - kPaletteClosed) / double(kPaletteOpen - kPaletteClosed));
 }
 
 void MainWindow::updatePanelVisibility() {

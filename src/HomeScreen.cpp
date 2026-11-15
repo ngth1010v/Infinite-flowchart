@@ -11,11 +11,13 @@
 #include <QMenu>
 #include <QPainter>
 #include <QPushButton>
+#include <QScrollBar>
 #include <QSettings>
+#include <QStyle>
 #include <QVBoxLayout>
 
 namespace {
-constexpr int kMaxRecent = 16;
+constexpr int kMaxRecent = 16, kMaxRecentFolders = 6;
 const QSize kThumb(220, 138);
 
 // ponytail: parses the whole file just for its thumbnail. Fine for normal charts; cache
@@ -60,6 +62,16 @@ void HomeScreen::removeRecent(const QString& path) {
     QSettings().setValue("recent", l);
 }
 
+QStringList HomeScreen::recentFolders() { return QSettings().value("recentFolders").toStringList(); }
+
+void HomeScreen::addRecentFolder(const QString& path) {
+    QStringList l = recentFolders();
+    l.removeAll(path);
+    l.prepend(path);
+    while (l.size() > kMaxRecentFolders) l.removeLast();
+    QSettings().setValue("recentFolders", l);
+}
+
 HomeScreen::HomeScreen(QWidget* parent) : QWidget(parent) {
     auto* title = new QLabel(tr("Flowchart"));
     QFont tf = title->font();
@@ -71,13 +83,16 @@ HomeScreen::HomeScreen(QWidget* parent) : QWidget(parent) {
 
     auto* newBtn = new QPushButton(tr("New chart"));
     auto* openBtn = new QPushButton(tr("Open file…"));
-    for (auto* b : {newBtn, openBtn}) b->setMinimumSize(140, 38);
+    auto* folderBtn = new QPushButton(tr("Open folder…"));
+    for (auto* b : {newBtn, openBtn, folderBtn}) b->setMinimumSize(140, 38);
     newBtn->setDefault(true);
     connect(newBtn, &QPushButton::clicked, this, &HomeScreen::newRequested);
     connect(openBtn, &QPushButton::clicked, this, [this] { emit openRequested(QString()); });
+    connect(folderBtn, &QPushButton::clicked, this, [this] { emit openFolderRequested(QString()); });
     auto* buttons = new QHBoxLayout;
     buttons->addWidget(newBtn);
     buttons->addWidget(openBtn);
+    buttons->addWidget(folderBtn);
     buttons->addStretch();
 
     auto* recentLabel = new QLabel(tr("Recent charts"));
@@ -85,6 +100,31 @@ HomeScreen::HomeScreen(QWidget* parent) : QWidget(parent) {
     rf.setBold(true);
     rf.setPointSizeF(rf.pointSizeF() * 1.15);
     recentLabel->setFont(rf);
+    m_foldersLabel = new QLabel(tr("Recent folders"));
+    m_foldersLabel->setFont(rf);
+
+    // One strip of folders side by side (full path in the tooltip); scrolls sideways if they do not fit.
+    m_folders = new QListWidget;
+    m_folders->setFrameShape(QFrame::NoFrame);
+    m_folders->setFlow(QListView::LeftToRight);
+    m_folders->setSpacing(6);
+    m_folders->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    m_folders->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(m_folders, &QListWidget::itemActivated, this,
+            [this](QListWidgetItem* it) { emit openFolderRequested(it->data(Qt::UserRole).toString()); });
+    connect(m_folders, &QListWidget::customContextMenuRequested, this, [this](QPoint pos) {
+        auto* it = m_folders->itemAt(pos);
+        if (!it) return;
+        QMenu menu;
+        menu.addAction(tr("Open"), this, [this, it] { emit openFolderRequested(it->data(Qt::UserRole).toString()); });
+        menu.addAction(tr("Remove from list"), this, [this, it] {
+            QStringList l = recentFolders();
+            l.removeAll(it->data(Qt::UserRole).toString());
+            QSettings().setValue("recentFolders", l);
+            refresh();
+        });
+        menu.exec(m_folders->viewport()->mapToGlobal(pos));
+    });
 
     m_recent = new QListWidget;
     m_recent->setViewMode(QListView::IconMode);
@@ -121,6 +161,9 @@ HomeScreen::HomeScreen(QWidget* parent) : QWidget(parent) {
     lay->addSpacing(14);
     lay->addLayout(buttons);
     lay->addSpacing(26);
+    lay->addWidget(m_foldersLabel);
+    lay->addWidget(m_folders);
+    lay->addSpacing(14);
     lay->addWidget(recentLabel);
     lay->addWidget(m_empty);
     lay->addWidget(m_recent, 1);
@@ -143,4 +186,22 @@ void HomeScreen::refresh() {
         m_recent->addItem(it);
     }
     m_empty->setVisible(m_recent->count() == 0);
+
+    // Folders that were moved or deleted drop out too.
+    m_folders->clear();
+    QStringList folders;
+    for (const QString& path : recentFolders())
+        if (QFileInfo(path).isDir()) folders << path;
+    if (folders != recentFolders()) QSettings().setValue("recentFolders", folders);
+    for (const QString& path : folders) {
+        auto* it = new QListWidgetItem(style()->standardIcon(QStyle::SP_DirIcon), QDir(path).dirName());
+        it->setData(Qt::UserRole, path);
+        it->setToolTip(QDir::toNativeSeparators(path));
+        m_folders->addItem(it);
+    }
+    if (!folders.isEmpty())
+        m_folders->setFixedHeight(m_folders->sizeHintForRow(0) + 2 * m_folders->spacing() +
+                                  m_folders->horizontalScrollBar()->sizeHint().height());
+    m_foldersLabel->setVisible(!folders.isEmpty());
+    m_folders->setVisible(!folders.isEmpty());
 }
