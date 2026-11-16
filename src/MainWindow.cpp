@@ -23,6 +23,7 @@
 #include <QMessageBox>
 #include <QMimeData>
 #include <QPainter>
+#include <QPushButton>
 #include <QRegularExpression>
 #include <QSaveFile>
 #include <QScrollArea>
@@ -40,6 +41,12 @@
 #include <QUndoStack>
 #include <QUrl>
 #include <QUuid>
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
 
 namespace {
 constexpr int kPaletteOpen = 230, kPaletteClosed = 72, kPanelOpen = 300, kFolderOpen = 240, kFolderClosed = 30;
@@ -77,6 +84,105 @@ QString readChart(const QString& path, QJsonObject* out) {
     if (o["version"].toInt() > 1) return QObject::tr("This file was made by a newer version of Flowchart.");
     *out = o;
     return {};
+}
+
+// What counts as a change on disk: shapes and links, not the thumbnail, view or chart id.
+QJsonObject chartContent(QJsonObject o) {
+    o.remove("thumb");
+    o.remove("view");
+    o.remove("chartId");
+    return o;
+}
+
+// An LLM export names the chart by its id, so the file on disk must hold that id too, or the
+// next load would make a new one. Writes only the id: unsaved edits stay unsaved.
+void stampChartId(const QString& path, ChartScene* s) {
+    if (path.isEmpty() || s->chartIdSaved) return;
+    QFile f(path);
+    if (!f.open(QIODevice::ReadOnly)) return;
+    QByteArray data = f.readAll();
+    f.close();
+    if (data.startsWith("\xEF\xBB\xBF")) data.remove(0, 3);
+    QJsonObject o = QJsonDocument::fromJson(data).object();
+    if (data.trimmed().isEmpty()) o = {{"format", "flowx"}, {"version", 1}};
+    if (o["format"].toString() != QLatin1String("flowx")) return;
+    o["chartId"] = s->chartId;
+    QSaveFile out(path);
+    if (out.open(QIODevice::WriteOnly) && out.write(QJsonDocument(o).toJson()) >= 0 && out.commit())
+        s->chartIdSaved = true;
+}
+
+// LLM text of the chart at `path`, from `open` if given (unsaved edits included), else from disk.
+// Null on error (*error says why). With stamp, writes the chart id into the file so a later update
+// of the export matches it (only for exports written to a file: a printed one cannot be updated).
+QString llmText(const QString& path, ChartScene* open, const QString& title, const QString& previous, QString* error,
+                bool stamp = true) {
+    ChartScene loaded;
+    ChartScene* s = open ? open : &loaded;
+    if (!open) {
+        QJsonObject o;
+        if (*error = readChart(path, &o); !error->isEmpty()) return {};
+        loaded.fromJson(o);
+    }
+    const QString text = s->toLlmText(title, previous, error);
+    if (!text.isNull() && stamp) stampChartId(path, s);
+    return text;
+}
+
+QStringList chartsUnder(const QString& dir) {
+    QStringList files;
+    for (QDirIterator it(dir, {"*.flowx"}, QDir::Files, QDirIterator::Subdirectories); it.hasNext();) files << it.next();
+    files.sort(Qt::CaseInsensitive);
+    return files;
+}
+
+// Every .flowx under `dir` as an LLM .md into `out`; see MainWindow::exportFolderForLlm.
+// `open` gives the loaded scene of a chart that is open in the app (null: read the file).
+int exportFolder(const QString& dir, const QString& out, bool update, QStringList* skipped,
+                 const std::function<ChartScene*(const QString&)>& open) {
+    int done = 0;
+    for (const QString& path : chartsUnder(dir)) {
+        const QString rel = QDir(dir).relativeFilePath(path);
+        const QString md = QDir(out).filePath(rel.chopped(QFileInfo(rel).suffix().size()) + "md");
+        QString previous, error;  // null: no earlier export, fresh one
+        if (QFile f(md); update && f.open(QIODevice::ReadOnly)) previous = QString::fromUtf8(f.readAll());
+        const QString text = llmText(path, open ? open(path) : nullptr, QFileInfo(md).completeBaseName(), previous, &error);
+        if (text.isNull()) {
+            *skipped << rel + ": " + error;
+            continue;
+        }
+        QDir().mkpath(QFileInfo(md).absolutePath());
+        QSaveFile f(md);
+        if (!f.open(QIODevice::WriteOnly) || f.write(text.toUtf8()) < 0 || !f.commit()) {
+            *skipped << rel + ": " + QObject::tr("cannot write %1").arg(QDir::toNativeSeparators(md));
+            continue;
+        }
+        ++done;
+    }
+    return done;
+}
+
+// The exe is a GUI app with no console of its own: write to the handle the caller redirected
+// (pipe or file), else to the console of the shell that started it.
+void writeStd(bool err, const QString& s) {
+#ifdef _WIN32
+    HANDLE h = GetStdHandle(err ? STD_ERROR_HANDLE : STD_OUTPUT_HANDLE);
+    if (!h || h == INVALID_HANDLE_VALUE) {
+        static const HANDLE con = AttachConsole(ATTACH_PARENT_PROCESS)
+            ? CreateFileW(L"CONOUT$", GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0, nullptr)
+            : INVALID_HANDLE_VALUE;
+        h = con;
+    }
+    DWORD mode, n;
+    if (GetConsoleMode(h, &mode)) {
+        WriteConsoleW(h, reinterpret_cast<const wchar_t*>(s.utf16()), DWORD(s.size()), &n, nullptr);
+    } else {
+        const QByteArray b = s.toUtf8();
+        WriteFile(h, b.constData(), DWORD(b.size()), &n, nullptr);
+    }
+#else
+    std::fputs(s.toUtf8().constData(), err ? stderr : stdout);
+#endif
 }
 
 // Files and folders under the open folder. Dropping a row onto a folder (or the empty area: the
@@ -340,6 +446,18 @@ MainWindow::MainWindow() {
     m_autosave.setInterval(QSettings().value("autosaveMinutes", 1).toInt() * 60'000);
     connect(&m_autosave, &QTimer::timeout, this, &MainWindow::autosave);
     m_autosave.start();
+    // Like VS Code: a file changed outside the app reloads if its chart has no unsaved edits;
+    // otherwise saving asks before overwriting it. Watch events can be lost (an editor that deletes
+    // and recreates the file), so coming back to the app checks every chart too.
+    connect(&m_watcher, &QFileSystemWatcher::fileChanged, this, [this](const QString& path) {
+        if (OpenChart* t = findChart(path)) syncFromDisk(t);
+        if (QFileInfo::exists(path) && !m_watcher.files().contains(path)) m_watcher.addPath(path);  // replaced by rename: watch it again
+    });
+    connect(qApp, &QGuiApplication::applicationStateChanged, this, [this](Qt::ApplicationState st) {
+        if (st != Qt::ApplicationActive) return;
+        for (auto* t : QList<OpenChart*>(m_charts)) syncFromDisk(t);
+        watchCharts();
+    });
 
     applyTheme(QSettings().value("dark", false).toBool());
     setPaletteCollapsed(QSettings().value("paletteCollapsed", false).toBool(), false);
@@ -631,6 +749,7 @@ void MainWindow::removeChart(OpenChart* t) {
     delete t->view;
     delete t->scene;
     delete t;
+    watchCharts();
 }
 
 void MainWindow::pathMoved(const QString& from, const QString& to) {
@@ -641,6 +760,7 @@ void MainWindow::pathMoved(const QString& from, const QString& to) {
         else continue;
         chartStateChanged(t);
     }
+    watchCharts();
 }
 
 void MainWindow::newChart() {
@@ -817,6 +937,8 @@ bool MainWindow::openFile(const QString& path) {
     OpenChart* t = addChart();
     t->scene->fromJson(o);
     t->path = abs;
+    t->disk = chartContent(o);
+    watchCharts();
     QSettings().setValue("lastDir", QFileInfo(abs).absolutePath());
     HomeScreen::addRecent(abs);
     if (o.contains("view")) t->view->setViewState(o["view"].toObject());
@@ -885,16 +1007,30 @@ bool MainWindow::saveAs(OpenChart* t) {
     return writeFile(t, path);
 }
 
-bool MainWindow::writeFile(OpenChart* t, const QString& path) {
+bool MainWindow::writeFile(OpenChart* t, const QString& path, bool quiet) {
+    if (samePath(path, t->path) && changedOnDisk(t)) {
+        if (quiet) return false;
+        QMessageBox box(QMessageBox::Warning, tr("File changed on disk"),
+                        tr("\"%1\" was changed outside Flowchart after it was opened or last saved.\n"
+                           "Overwrite it with your version?").arg(QFileInfo(path).fileName()),
+                        QMessageBox::Cancel, this);
+        QPushButton* overwrite = box.addButton(tr("Overwrite"), QMessageBox::DestructiveRole);
+        box.setDefaultButton(QMessageBox::Cancel);
+        box.exec();
+        if (box.clickedButton() != overwrite) return false;
+    }
     QJsonObject o = t->scene->toJson();
     o["view"] = t->view->viewState();
     o["thumb"] = QString::fromLatin1(thumbnailPng(t->scene).toBase64());
+    const QByteArray bytes = QJsonDocument(o).toJson();
     QSaveFile f(path);  // writes to a temp file and renames, so a crash never leaves half a file
-    if (!f.open(QIODevice::WriteOnly) || f.write(QJsonDocument(o).toJson()) < 0 || !f.commit()) {
+    if (!f.open(QIODevice::WriteOnly) || f.write(bytes) < 0 || !f.commit()) {
         QMessageBox::warning(this, tr("Save failed"), tr("Cannot save %1:\n%2").arg(QDir::toNativeSeparators(path), f.errorString()));
         return false;
     }
     t->path = QFileInfo(path).absoluteFilePath();
+    t->disk = chartContent(QJsonDocument::fromJson(bytes).object());  // as read back, so it compares equal later
+    watchCharts();
     QSettings().setValue("lastDir", QFileInfo(t->path).absolutePath());
     t->scene->undoStack()->setClean();
     t->scene->chartIdSaved = true;
@@ -902,6 +1038,42 @@ bool MainWindow::writeFile(OpenChart* t, const QString& path) {
     HomeScreen::addRecent(t->path);
     chartStateChanged(t);
     return true;
+}
+
+// The file holds other shapes/links than when it was last read or written here. A file that is
+// gone does not count (saving recreates it); one that no longer parses does (someone wrote it).
+bool MainWindow::changedOnDisk(OpenChart* t) const {
+    if (t->path.isEmpty() || t->disk.isEmpty() || !QFileInfo::exists(t->path)) return false;
+    QJsonObject o;
+    return !readChart(t->path, &o).isEmpty() || chartContent(o) != t->disk;
+}
+
+void MainWindow::syncFromDisk(OpenChart* t) {
+    if (t->path.isEmpty() || t->disk.isEmpty()) return;
+    QJsonObject o;
+    if (!readChart(t->path, &o).isEmpty()) return;  // gone, locked or half written: the next change event retries
+    const QJsonObject content = chartContent(o);
+    if (content == t->disk) return;  // our own write, or only the thumbnail/view/id changed
+    if (!t->scene->undoStack()->isClean()) {
+        statusBar()->showMessage(tr("%1 changed on disk. Saving will ask before overwriting it.")
+                                     .arg(QFileInfo(t->path).fileName()), 10'000);
+        return;
+    }
+    if (QApplication::mouseButtons() != Qt::NoButton) {  // mid-drag: reload once the mouse is released
+        QTimer::singleShot(300, this, [this, t] {
+            if (m_charts.contains(t)) syncFromDisk(t);
+        });
+        return;
+    }
+    t->disk = content;
+    t->scene->fromJson(o);  // keeps the current zoom and scroll
+    chartStateChanged(t);
+}
+
+void MainWindow::watchCharts() {
+    if (!m_watcher.files().isEmpty()) m_watcher.removePaths(m_watcher.files());
+    for (auto* t : std::as_const(m_charts))
+        if (!t->path.isEmpty() && QFileInfo::exists(t->path)) m_watcher.addPath(t->path);
 }
 
 QByteArray MainWindow::thumbnailPng(ChartScene* s) {
@@ -936,8 +1108,8 @@ void MainWindow::removeRecovery(OpenChart* t) {
 void MainWindow::autosave() {
     for (auto* t : std::as_const(m_charts)) {
         if (t->scene->undoStack()->isClean()) continue;
-        if (!t->path.isEmpty() && writeFile(t, t->path)) continue;  // saved chart: write the file itself
-        // Untitled (or the write failed): keep a recovery copy instead.
+        if (!t->path.isEmpty() && writeFile(t, t->path, true)) continue;  // saved chart: write the file itself
+        // Untitled, the file changed on disk meanwhile, or the write failed: keep a recovery copy instead.
         QJsonObject o = t->scene->toJson();
         o["view"] = t->view->viewState();
         o["origPath"] = t->path;
@@ -1047,24 +1219,6 @@ void MainWindow::exportLlmUpdate() {
     QSettings().setValue("exportDirs", exportDirs);
 }
 
-// An LLM export names the chart by its id, so the file on disk must hold that id too, or the
-// next load would make a new one. Writes only the id: unsaved edits stay unsaved.
-void MainWindow::stampChartId(const QString& path, ChartScene* s) {
-    if (path.isEmpty() || s->chartIdSaved) return;
-    QFile f(path);
-    if (!f.open(QIODevice::ReadOnly)) return;
-    QByteArray data = f.readAll();
-    f.close();
-    if (data.startsWith("\xEF\xBB\xBF")) data.remove(0, 3);
-    QJsonObject o = QJsonDocument::fromJson(data).object();
-    if (data.trimmed().isEmpty()) o = {{"format", "flowx"}, {"version", 1}};
-    if (o["format"].toString() != QLatin1String("flowx")) return;
-    o["chartId"] = s->chartId;
-    QSaveFile out(path);
-    if (out.open(QIODevice::WriteOnly) && out.write(QJsonDocument(o).toJson()) >= 0 && out.commit())
-        s->chartIdSaved = true;
-}
-
 void MainWindow::exportFolderDialog(const QString& dir, bool update) {
     const QString name = QDir(dir).dirName();
     const QString target = QFileDialog::getExistingDirectory(
@@ -1082,42 +1236,69 @@ void MainWindow::exportFolderDialog(const QString& dir, bool update) {
 }
 
 int MainWindow::exportFolderForLlm(const QString& dir, const QString& out, bool update, QStringList* skipped) {
-    QStringList files;
-    for (QDirIterator it(dir, {"*.flowx"}, QDir::Files, QDirIterator::Subdirectories); it.hasNext();) files << it.next();
-    int done = 0;
-    for (const QString& path : std::as_const(files)) {
-        const QString rel = QDir(dir).relativeFilePath(path);
-        const QString md = QDir(out).filePath(rel.chopped(QFileInfo(rel).suffix().size()) + "md");
-        // An open chart exports as shown (unsaved edits included), like File > Export; others from disk.
-        ChartScene loaded;
-        ChartScene* s = &loaded;
-        if (const OpenChart* t = findChart(path)) {
-            s = t->scene;
-        } else {
-            QJsonObject o;
-            if (const QString error = readChart(path, &o); !error.isEmpty()) {
-                *skipped << rel + ": " + error;
-                continue;
-            }
-            loaded.fromJson(o);
-        }
-        QString previous, error;  // null: no earlier export, fresh one
-        if (QFile f(md); update && f.open(QIODevice::ReadOnly)) previous = QString::fromUtf8(f.readAll());
-        const QString text = s->toLlmText(QFileInfo(md).completeBaseName(), previous, &error);
-        if (text.isNull()) {
-            *skipped << rel + ": " + error;
-            continue;
-        }
-        stampChartId(path, s);
-        QDir().mkpath(QFileInfo(md).absolutePath());
-        QSaveFile f(md);
-        if (!f.open(QIODevice::WriteOnly) || f.write(text.toUtf8()) < 0 || !f.commit()) {
-            *skipped << rel + ": " + tr("cannot write %1").arg(QDir::toNativeSeparators(md));
-            continue;
-        }
-        ++done;
+    // An open chart exports as shown (unsaved edits included), like File > Export; others from disk.
+    return exportFolder(dir, out, update, skipped, [this](const QString& path) {
+        const OpenChart* t = findChart(path);
+        return t ? t->scene : nullptr;
+    });
+}
+
+int MainWindow::runCli(const QStringList& args) {
+    const QString usage = tr(
+        "Usage: Flowchart.exe --export <chart.flowx | folder> [-o <out>] [--update]\n"
+        "  chart, no -o:   prints the LLM outline (Markdown) to stdout\n"
+        "  chart, -o:      writes it to <out> (.md or .txt)\n"
+        "  folder, no -o:  prints every chart under it, one after another\n"
+        "  folder, -o:     writes <out>/<same subfolders>/<chart>.md\n"
+        "  --update:       rewrites the earlier export at <out> with changes marked (needs -o)\n");
+    QString src, out;
+    bool update = false;
+    for (int i = 2; i < args.size(); ++i) {
+        if (args[i] == "--update") update = true;
+        else if ((args[i] == "-o" || args[i] == "--out") && i + 1 < args.size()) out = args[++i];
+        else if (src.isEmpty() && !args[i].startsWith('-')) src = args[i];
+        else return writeStd(true, usage), 2;
     }
-    return done;
+    if (src.isEmpty() || (update && out.isEmpty())) return writeStd(true, usage), 2;
+    const QFileInfo fi(src);
+    QString error;
+    if (fi.isDir()) {
+        if (!out.isEmpty()) {
+            QStringList skipped;
+            const int n = exportFolder(src, out, update, &skipped, {});
+            writeStd(false, tr("Exported %n chart(s) to %1\n", nullptr, n).arg(QDir::toNativeSeparators(out)));
+            if (!skipped.isEmpty()) writeStd(true, tr("Skipped:\n") + skipped.join('\n') + '\n');
+            return skipped.isEmpty() ? 0 : 1;
+        }
+        int failed = 0;
+        for (const QString& path : chartsUnder(src)) {
+            const QString rel = QDir(src).relativeFilePath(path);
+            const QString text = llmText(path, nullptr, rel.chopped(QFileInfo(rel).suffix().size() + 1), {}, &error, false);
+            if (text.isNull()) {
+                writeStd(true, rel + ": " + error + '\n');
+                ++failed;
+            } else {
+                writeStd(false, text + "\n---\n\n");
+            }
+        }
+        return failed ? 1 : 0;
+    }
+    if (!fi.isFile()) return writeStd(true, tr("No such file or folder: %1\n").arg(src)), 1;
+    QString previous;  // null: fresh export
+    if (update) {
+        QFile f(out);
+        if (!f.open(QIODevice::ReadOnly))
+            return writeStd(true, tr("Cannot read the earlier export %1: %2\n").arg(out, f.errorString())), 1;
+        previous = QString::fromUtf8(f.readAll());
+    }
+    const QString text = llmText(fi.absoluteFilePath(), nullptr, QFileInfo(out.isEmpty() ? src : out).completeBaseName(), previous, &error, !out.isEmpty());
+    if (text.isNull()) return writeStd(true, error + '\n'), 1;
+    if (out.isEmpty()) return writeStd(false, text), 0;
+    QSaveFile f(out);
+    if (!f.open(QIODevice::WriteOnly) || f.write(text.toUtf8()) < 0 || !f.commit())
+        return writeStd(true, tr("Cannot write %1\n").arg(out)), 1;
+    writeStd(false, tr("Wrote %1\n").arg(QDir::toNativeSeparators(out)));
+    return 0;
 }
 
 void MainWindow::copy() {

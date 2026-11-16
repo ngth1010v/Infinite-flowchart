@@ -9,6 +9,9 @@
 #include <QFile>
 #include <QJsonDocument>
 #include <QLineEdit>
+#include <QMessageBox>
+#include <QPushButton>
+#include <QTimer>
 #include <QFileSystemModel>
 #include <QMimeData>
 #include <QTabBar>
@@ -566,6 +569,51 @@ int main(int argc, char** argv) {
             for (auto* v : views)
                 if (v->isVisible()) CHECK(v->chart()->itemCount() == 0);
         }
+    }
+
+    // The chart file changed outside the app (like VS Code): no unsaved edits, it reloads; with
+    // unsaved edits they stay, and saving asks first (Cancel keeps the file, Overwrite writes it).
+    {
+        QTemporaryDir dir;
+        const QString path = dir.filePath("s.flowx");
+        auto writeChart = [&](int nodes) {
+            ChartScene c;
+            for (int i = 0; i < nodes; ++i) c.addNode(FlowShape::Process, {0, i * 100.0});
+            QFile f(path);
+            if (f.open(QIODevice::WriteOnly)) f.write(QJsonDocument(c.toJson()).toJson());
+        };
+        auto nodesOnDisk = [&] {
+            QFile f(path);
+            return f.open(QIODevice::ReadOnly) ? QJsonDocument::fromJson(f.readAll())["nodes"].toArray().size() : -1;
+        };
+        auto answer = [](const QString& button) {
+            QTimer::singleShot(300, [button] {
+                if (auto* box = qobject_cast<QMessageBox*>(QApplication::activeModalWidget()))
+                    for (auto* b : box->buttons())
+                        if (b->text() == button) b->click();
+            });
+        };
+        writeChart(1);
+        MainWindow w;
+        w.show();
+        CHECK(w.openFile(path));
+        ChartScene* s = nullptr;
+        for (auto* v : w.findChildren<ChartView*>())
+            if (v->isVisible()) s = v->chart();
+        CHECK(s && s->itemCount() == 1);
+        writeChart(2);
+        CHECK(QTest::qWaitFor([&] { return s->itemCount() == 2; }));
+        CHECK(s->undoStack()->isClean());
+        s->addNode(FlowShape::Process, {300, 0});
+        writeChart(5);
+        QTest::qWait(500);
+        CHECK(s->itemCount() == 3);  // unsaved edits kept, not replaced
+        answer("Cancel");
+        w.saveAll();
+        CHECK(nodesOnDisk() == 5 && !s->undoStack()->isClean());
+        answer("Overwrite");
+        w.saveAll();
+        CHECK(nodesOnDisk() == 3 && s->undoStack()->isClean());
     }
 
     std::printf("OK  gui interactions\n");

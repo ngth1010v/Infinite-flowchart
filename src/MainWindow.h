@@ -1,4 +1,6 @@
 #pragma once
+#include <QFileSystemWatcher>
+#include <QJsonObject>
 #include <QMainWindow>
 #include <QPointer>
 #include <QTimer>
@@ -28,12 +30,15 @@ struct OpenChart {
     ChartView* view;
     QString path;      // empty: Untitled
     QString recovery;  // autosave copy of unsaved work for crash recovery; empty until written
+    QJsonObject disk;  // chart content last read from or written to path (no thumbnail/view/id); empty: unknown
 };
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
 public:
     MainWindow();
+    // Command line export (Flowchart.exe --export ...), run instead of the window. Returns the exit code.
+    static int runCli(const QStringList& args);
     void start(const QString& fileArg);  // crash recovery, then open a file given on the command line
     bool openFile(const QString& path);  // replaces the current chart; with a folder open, switches to it
     void openFolder(const QString& dir);  // shows the folder pane with the folder's .flowx files
@@ -86,6 +91,7 @@ private:
     QLabel* m_zoomLabel;
     QList<QAction*> m_chartActions;
     QTimer m_autosave;
+    QFileSystemWatcher m_watcher;  // open charts' files, to pick up changes made outside the app
     int m_pasteCount = 0;
 
     QAction* makeAction(QMenu* menu, const QString& text, const QList<QKeySequence>& keys,
@@ -114,10 +120,13 @@ private:
     bool maybeSave(OpenChart* t);
     bool save(OpenChart* t);
     bool saveAs(OpenChart* t);
-    bool writeFile(OpenChart* t, const QString& path);
+    // quiet (autosave): no question; returns false if the file changed on disk since it was read
+    bool writeFile(OpenChart* t, const QString& path, bool quiet = false);
+    bool changedOnDisk(OpenChart* t) const;
+    void syncFromDisk(OpenChart* t);  // reloads the chart if its file changed and it has no unsaved edits
+    void watchCharts();               // watch every open chart's file
     void exportChart(bool forLlm = false);  // forLlm: text outline (.md/.txt) instead of an image
     void exportLlmUpdate();                 // rewrite an earlier LLM export of this chart, marking the changes
-    void stampChartId(const QString& path, ChartScene* s);
     void copy();
     void paste();
     void applyTheme(bool dark);

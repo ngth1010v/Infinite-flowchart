@@ -33,6 +33,34 @@ Unsaved work is autosaved (every minute by default): saved charts write their ow
 ones get a recovery copy `%APPDATA%\Flowchart\Flowchart\autosave-*.flowx` (one per unsaved chart), offered
 for recovery after a crash.
 
+Open charts follow their file on disk, like VS Code: when another program (an editor, an LLM)
+changes the file, a chart with no unsaved edits reloads it at once. A chart with unsaved edits
+keeps them; saving it then asks Overwrite / Cancel, and autosave writes a recovery copy instead of
+the file.
+
+## Command line export for LLM
+
+```sh
+Flowchart.exe --export chart.flowx                        # Markdown outline to stdout
+Flowchart.exe --export folder                             # every chart under it, to stdout
+Flowchart.exe --export chart.flowx -o chart.md            # to a file (.md or .txt)
+Flowchart.exe --export folder -o out                      # out/<same subfolders>/<chart>.md
+Flowchart.exe --export chart.flowx -o chart.md --update   # rewrite an earlier export, changes marked
+Flowchart.exe --export folder -o out --update             # same for a folder (new charts: fresh .md)
+```
+
+Same output as the app's Export for LLM / Export as update for LLM. Exit code 0 ok, 1 a chart was
+skipped (reason on stderr), 2 bad arguments. It is a GUI exe: in PowerShell pipe it
+(`... | Out-String`) so the shell waits for the output.
+
+## LLM skill
+
+`skills/flowx/SKILL.md` teaches an AI assistant to read .flowx files (export when only the content
+is needed, JSON when editing) and to write them. To install it, ask your assistant
+"install the skill in this repo <repo link>": it copies `skills/flowx/` into `~/.claude/skills/flowx/`
+(all projects) or `<project>/.claude/skills/flowx/` (one project). Put `Flowchart.exe` on PATH so
+the skill can run the export.
+
 ## Build (MSYS2 UCRT64)
 
 ```sh
