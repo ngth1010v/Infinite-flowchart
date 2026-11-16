@@ -507,6 +507,49 @@ int main(int argc, char** argv) {
         CHECK(saved.open(QIODevice::ReadOnly) && QJsonDocument::fromJson(saved.readAll())["nodes"].toArray().size() == 1);
     }
 
+    // Folder pane context menu actions: new file / new folder inside a subfolder, and exporting a
+    // whole folder for LLM (fresh, then as update; a mismatched earlier .md is skipped, untouched).
+    {
+        QTemporaryDir dir, outDir;
+        QDir(dir.path()).mkdir("sub");
+        ChartScene c;
+        c.addNode(FlowShape::Process, {0, 0});
+        QFile f(dir.filePath("sub/c.flowx"));
+        CHECK(f.open(QIODevice::WriteOnly));
+        f.write(QJsonDocument(c.toJson()).toJson());
+        f.close();
+        MainWindow w;
+        w.show();
+        CHECK(QTest::qWaitForWindowExposed(&w));
+        w.openFolder(dir.path());
+        const QString sub = QFileInfo(dir.filePath("sub")).absoluteFilePath();
+        CHECK(w.newFileInFolder(sub) && w.currentPath() == sub + "/Untitled.flowx");
+        CHECK(w.newSubfolder(sub) && QFileInfo(sub + "/New folder").isDir());
+        CHECK(w.newSubfolder(sub) && QFileInfo(sub + "/New folder 2").isDir());
+
+        const QString out = outDir.filePath("proj");
+        QStringList skipped;
+        CHECK(w.exportFolderForLlm(dir.path(), out, false, &skipped) == 2 && skipped.isEmpty());
+        QFile md(out + "/sub/c.md");
+        CHECK(md.open(QIODevice::ReadOnly) && md.readAll().contains("Process"));
+        md.close();
+        CHECK(QFileInfo::exists(out + "/sub/Untitled.md"));
+        // Update: c changed on disk, Untitled.md is from another chart, d is new.
+        c.addNode(FlowShape::Decision, {0, 200});
+        CHECK(f.open(QIODevice::WriteOnly));
+        f.write(QJsonDocument(c.toJson()).toJson());
+        f.close();
+        QFile other(out + "/sub/Untitled.md");
+        CHECK(other.open(QIODevice::WriteOnly));
+        other.write("<!-- flowx chart 00000000-0000-0000-0000-000000000000 -->\n");
+        other.close();
+        QFile::copy(dir.filePath("sub/c.flowx"), dir.filePath("d.flowx"));
+        CHECK(w.exportFolderForLlm(dir.path(), out, true, &skipped) == 2 && skipped.size() == 1);
+        CHECK(skipped[0].startsWith("sub/Untitled.flowx"));
+        CHECK(md.open(QIODevice::ReadOnly) && md.readAll().contains("(new)"));
+        CHECK(QFileInfo::exists(out + "/d.md"));
+    }
+
     // A blank .flowx (0 bytes, a lone UTF-8 BOM, or only whitespace) opens as an empty chart.
     {
         QTemporaryDir dir;

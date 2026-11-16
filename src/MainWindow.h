@@ -9,6 +9,7 @@ class ChartScene;
 class ChartView;
 class HomeScreen;
 class QLabel;
+class QModelIndex;
 class QScrollArea;
 class QFileSystemModel;
 class QStackedWidget;
@@ -36,7 +37,13 @@ public:
     void start(const QString& fileArg);  // crash recovery, then open a file given on the command line
     bool openFile(const QString& path);  // replaces the current chart; with a folder open, switches to it
     void openFolder(const QString& dir);  // shows the folder pane with the folder's .flowx files
-    bool newFileInFolder();  // Untitled.flowx (or Untitled 2…) in the folder root, opened, name being edited
+    // Untitled.flowx (or Untitled 2…) in `dir` (default: the folder root), opened, name being edited
+    bool newFileInFolder(const QString& dir = {});
+    bool newSubfolder(const QString& dir);  // "New folder" (or New folder 2…) in `dir`, name being edited
+    // Every .flowx under `dir` as an LLM .md into `out`, same subfolder layout. With update, an
+    // existing .md is rewritten with changes marked (see ChartScene::toLlmText); charts without one
+    // get a fresh export. Charts that could not be read or updated go into *skipped. Returns how many were written.
+    int exportFolderForLlm(const QString& dir, const QString& out, bool update, QStringList* skipped);
     void saveAll();
     int chartCount() const { return m_charts.size(); }
     QString currentPath() const;
@@ -98,6 +105,9 @@ private:
     void removeChart(OpenChart* t);  // drops it without asking
     void pathMoved(const QString& from, const QString& to);  // a file or folder was moved/renamed on disk
     void setFolderCollapsed(bool collapsed, bool animate = true);
+    void showFolderMenu(const QModelIndex& index, const QPoint& globalPos);  // invalid index: empty area (root)
+    void deletePath(const QString& path);  // asks, then to the Recycle Bin; open charts there are dropped
+    void exportFolderDialog(const QString& dir, bool update);
     void newChart();
     void openDialog();
     void openFolderDialog();
@@ -107,7 +117,7 @@ private:
     bool writeFile(OpenChart* t, const QString& path);
     void exportChart(bool forLlm = false);  // forLlm: text outline (.md/.txt) instead of an image
     void exportLlmUpdate();                 // rewrite an earlier LLM export of this chart, marking the changes
-    void stampChartId(OpenChart* t);
+    void stampChartId(const QString& path, ChartScene* s);
     void copy();
     void paste();
     void applyTheme(bool dark);

@@ -9,6 +9,7 @@
 #include <QCloseEvent>
 #include <QCursor>
 #include <QDir>
+#include <QDirIterator>
 #include <QFileDialog>
 #include <QFileSystemModel>
 #include <QFileInfo>
@@ -17,6 +18,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QLabel>
+#include <QMenu>
 #include <QMenuBar>
 #include <QMessageBox>
 #include <QMimeData>
@@ -58,6 +60,24 @@ struct OverlaysHidden {
 };
 
 bool samePath(const QString& a, const QString& b) { return !a.isEmpty() && !b.isEmpty() && QFileInfo(a) == QFileInfo(b); }
+
+// The chart JSON in a .flowx file. Returns an error message (empty on success).
+QString readChart(const QString& path, QJsonObject* out) {
+    QFile f(path);
+    if (!f.open(QIODevice::ReadOnly))
+        return QObject::tr("Cannot open %1:\n%2").arg(QDir::toNativeSeparators(path), f.errorString());
+    QByteArray data = f.readAll();
+    if (data.startsWith("\xEF\xBB\xBF")) data.remove(0, 3);  // UTF-8 BOM some editors add
+    QJsonParseError err{};
+    // A blank file (e.g. an empty .txt renamed to .flowx) opens as an empty chart.
+    const QJsonObject o = data.trimmed().isEmpty() ? QJsonObject{{"format", "flowx"}, {"version", 1}}
+                                                   : QJsonDocument::fromJson(data, &err).object();
+    if (err.error != QJsonParseError::NoError || o["format"].toString() != QLatin1String("flowx"))
+        return QObject::tr("%1 is not a valid flowchart file.").arg(QDir::toNativeSeparators(path));
+    if (o["version"].toInt() > 1) return QObject::tr("This file was made by a newer version of Flowchart.");
+    *out = o;
+    return {};
+}
 
 // Files and folders under the open folder. Dropping a row onto a folder (or the empty area: the
 // root) moves it there on disk; renamed files keep their .flowx extension.
@@ -225,6 +245,10 @@ MainWindow::MainWindow() {
         if (m_fsModel->isDir(i)) m_tree->setExpanded(i, !m_tree->isExpanded(i));
         else openFile(m_fsModel->filePath(i));
     });
+    m_tree->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(m_tree, &QWidget::customContextMenuRequested, this, [this](const QPoint& pos) {
+        showFolderMenu(m_tree->indexAt(pos), m_tree->viewport()->mapToGlobal(pos));
+    });
     m_folderName = new QLabel;
     QFont fnf = m_folderName->font();
     fnf.setBold(true);
@@ -239,7 +263,7 @@ MainWindow::MainWindow() {
     newFile->setToolTip(tr("New chart in the folder root (Ctrl+N)"));
     newFile->setAutoRaise(true);
     newFile->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-    connect(newFile, &QToolButton::clicked, this, &MainWindow::newFileInFolder);
+    connect(newFile, &QToolButton::clicked, this, [this] { newFileInFolder(); });
     m_folderBody = new QWidget;
     auto* fbl = new QVBoxLayout(m_folderBody);
     fbl->setContentsMargins(0, 0, 0, 0);
@@ -632,10 +656,11 @@ void MainWindow::newChart() {
     t->view->resetView();
 }
 
-bool MainWindow::newFileInFolder() {
+bool MainWindow::newFileInFolder(const QString& dir) {
     if (m_folder.isEmpty()) return false;
-    QString path = QDir(m_folder).filePath(tr("Untitled") + ".flowx");
-    for (int n = 2; QFileInfo::exists(path); ++n) path = QDir(m_folder).filePath(tr("Untitled %1").arg(n) + ".flowx");
+    const QDir base(dir.isEmpty() ? m_folder : dir);
+    QString path = base.filePath(tr("Untitled") + ".flowx");
+    for (int n = 2; QFileInfo::exists(path); ++n) path = base.filePath(tr("Untitled %1").arg(n) + ".flowx");
     QSaveFile f(path);
     if (!f.open(QIODevice::WriteOnly) || f.write(QJsonDocument(QJsonObject{{"format", "flowx"}, {"version", 1}}).toJson()) < 0 ||
         !f.commit()) {
@@ -645,10 +670,73 @@ bool MainWindow::newFileInFolder() {
     if (!openFile(path)) return false;
     const QModelIndex i = m_fsModel->index(path);
     if (i.isValid()) {
+        m_tree->expand(i.parent());  // a subfolder: the new row must be on screen to edit it
         m_tree->setCurrentIndex(i);
         m_tree->edit(i);  // name it right away; Esc keeps "Untitled"
     }
     return true;
+}
+
+bool MainWindow::newSubfolder(const QString& dir) {
+    QString name = tr("New folder");
+    for (int n = 2; QFileInfo::exists(QDir(dir).filePath(name)); ++n) name = tr("New folder %1").arg(n);
+    const QModelIndex i = m_fsModel->mkdir(m_fsModel->index(dir), name);
+    if (!i.isValid()) {
+        QMessageBox::warning(this, tr("New folder"), tr("Cannot create a folder in %1.").arg(QDir::toNativeSeparators(dir)));
+        return false;
+    }
+    m_tree->expand(i.parent());
+    m_tree->setCurrentIndex(i);
+    m_tree->edit(i);
+    return true;
+}
+
+void MainWindow::showFolderMenu(const QModelIndex& index, const QPoint& globalPos) {
+    if (m_folder.isEmpty()) return;
+    const QString path = index.isValid() ? m_fsModel->filePath(index) : m_folder;
+    const bool isDir = !index.isValid() || m_fsModel->isDir(index);
+    const QPersistentModelIndex row(index);  // the file watcher may change the model while the menu is open
+    QMenu menu(this);
+    if (index.isValid()) {
+        menu.addAction(tr("Rename"), this, [this, row] { if (row.isValid()) m_tree->edit(row); });
+        menu.addAction(tr("Delete"), this, [this, path] { deletePath(path); });
+    }
+    if (isDir) {
+        menu.addAction(tr("Export this folder for LLM…"), this, [this, path] { exportFolderDialog(path, false); });
+        menu.addAction(tr("Export this folder as update for LLM…"), this, [this, path] { exportFolderDialog(path, true); });
+    } else {  // the File menu's exports, on this chart (shown first, so it is clear which one)
+        menu.addAction(tr("Export as PNG / SVG / PDF…"), this, [this, path] { if (openFile(path)) exportChart(); });
+        menu.addAction(tr("Export for LLM (text)…"), this, [this, path] { if (openFile(path)) exportChart(true); });
+        menu.addAction(tr("Export as update for LLM…"), this, [this, path] { if (openFile(path)) exportLlmUpdate(); });
+    }
+    menu.addSeparator();
+    const QString dir = isDir ? path : QFileInfo(path).absolutePath();
+    menu.addAction(tr("Create new file"), this, [this, dir] { newFileInFolder(dir); });
+    menu.addAction(tr("Create new folder"), this, [this, dir] { newSubfolder(dir); });
+    menu.exec(globalPos);
+}
+
+void MainWindow::deletePath(const QString& path) {
+    const QFileInfo fi(path);
+    QList<OpenChart*> inside;
+    bool unsaved = false;
+    for (auto* t : std::as_const(m_charts))
+        if (samePath(t->path, path) || t->path.startsWith(fi.absoluteFilePath() + '/', Qt::CaseInsensitive)) {
+            inside << t;
+            unsaved |= !t->scene->undoStack()->isClean();
+        }
+    QString q = (fi.isDir() ? tr("Delete the folder \"%1\" and everything in it?") : tr("Delete \"%1\"?")).arg(fi.fileName());
+    q += '\n' + tr("It goes to the Recycle Bin.");
+    if (unsaved) q += '\n' + tr("Unsaved changes to the open chart(s) there are lost.");
+    if (QMessageBox::question(this, tr("Delete"), q) != QMessageBox::Yes) return;
+    if (!QFile::moveToTrash(path)) {
+        QMessageBox::warning(this, tr("Delete"), tr("Cannot delete %1.").arg(QDir::toNativeSeparators(path)));
+        return;
+    }
+    for (auto* t : std::as_const(inside)) {
+        removeRecovery(t);
+        removeChart(t);
+    }
 }
 
 void MainWindow::openDialog() {
@@ -707,26 +795,13 @@ bool MainWindow::openFile(const QString& path) {
         setCurrent(t);
         return true;
     }
-    QFile f(path);
-    if (!f.open(QIODevice::ReadOnly)) {
-        QMessageBox::warning(this, tr("Cannot open chart"), tr("Cannot open %1:\n%2").arg(QDir::toNativeSeparators(path), f.errorString()));
-        HomeScreen::removeRecent(path);
-        if (!onChart()) m_home->refresh();
-        return false;
-    }
-    QByteArray data = f.readAll();
-    if (data.startsWith("\xEF\xBB\xBF")) data.remove(0, 3);  // UTF-8 BOM some editors add
-    QJsonParseError err{};
-    // A blank file (e.g. an empty .txt renamed to .flowx) opens as an empty chart.
-    const bool blankFile = data.trimmed().isEmpty();
-    const QJsonObject o = blankFile ? QJsonObject{{"format", "flowx"}, {"version", 1}}
-                                    : QJsonDocument::fromJson(data, &err).object();
-    if (err.error != QJsonParseError::NoError || o["format"].toString() != QLatin1String("flowx")) {
-        QMessageBox::warning(this, tr("Cannot open chart"), tr("%1 is not a valid flowchart file.").arg(QDir::toNativeSeparators(path)));
-        return false;
-    }
-    if (o["version"].toInt() > 1) {
-        QMessageBox::warning(this, tr("Cannot open chart"), tr("This file was made by a newer version of Flowchart."));
+    QJsonObject o;
+    if (const QString error = readChart(path, &o); !error.isEmpty()) {
+        QMessageBox::warning(this, tr("Cannot open chart"), error);
+        if (!QFileInfo(path).isReadable()) {  // gone or locked: off the recent list
+            HomeScreen::removeRecent(path);
+            if (!onChart()) m_home->refresh();
+        }
         return false;
     }
     // Without a folder the file replaces the current chart. With one, the current chart stays
@@ -937,7 +1012,7 @@ void MainWindow::exportChart(bool forLlm) {
 
     exportDirs[cur()->path] = QFileInfo(path).absolutePath();
     QSettings().setValue("exportDirs", exportDirs);
-    if (forLlm) stampChartId(cur());
+    if (forLlm) stampChartId(cur()->path, scene());
     const bool ok = scene()->exportTo(path);
     if (!ok) QMessageBox::warning(this, tr("Export failed"), tr("Cannot write %1.").arg(QDir::toNativeSeparators(path)));
 }
@@ -962,7 +1037,7 @@ void MainWindow::exportLlmUpdate() {
         QMessageBox::warning(this, tr("Cannot update"), error);
         return;
     }
-    stampChartId(cur());
+    stampChartId(cur()->path, scene());
     QSaveFile out(path);
     if (!out.open(QIODevice::WriteOnly) || out.write(text.toUtf8()) < 0 || !out.commit()) {
         QMessageBox::warning(this, tr("Export failed"), tr("Cannot write %1.").arg(QDir::toNativeSeparators(path)));
@@ -974,9 +1049,9 @@ void MainWindow::exportLlmUpdate() {
 
 // An LLM export names the chart by its id, so the file on disk must hold that id too, or the
 // next load would make a new one. Writes only the id: unsaved edits stay unsaved.
-void MainWindow::stampChartId(OpenChart* t) {
-    if (t->path.isEmpty() || t->scene->chartIdSaved) return;
-    QFile f(t->path);
+void MainWindow::stampChartId(const QString& path, ChartScene* s) {
+    if (path.isEmpty() || s->chartIdSaved) return;
+    QFile f(path);
     if (!f.open(QIODevice::ReadOnly)) return;
     QByteArray data = f.readAll();
     f.close();
@@ -984,10 +1059,65 @@ void MainWindow::stampChartId(OpenChart* t) {
     QJsonObject o = QJsonDocument::fromJson(data).object();
     if (data.trimmed().isEmpty()) o = {{"format", "flowx"}, {"version", 1}};
     if (o["format"].toString() != QLatin1String("flowx")) return;
-    o["chartId"] = t->scene->chartId;
-    QSaveFile out(t->path);
+    o["chartId"] = s->chartId;
+    QSaveFile out(path);
     if (out.open(QIODevice::WriteOnly) && out.write(QJsonDocument(o).toJson()) >= 0 && out.commit())
-        t->scene->chartIdSaved = true;
+        s->chartIdSaved = true;
+}
+
+void MainWindow::exportFolderDialog(const QString& dir, bool update) {
+    const QString name = QDir(dir).dirName();
+    const QString target = QFileDialog::getExistingDirectory(
+        this, update ? tr("Pick the folder holding the earlier export \"%1\"").arg(name) : tr("Export \"%1\" for LLM into").arg(name),
+        QSettings().value("folderExportDir", QFileInfo(dir).absolutePath()).toString());
+    if (target.isEmpty()) return;
+    QSettings().setValue("folderExportDir", target);
+    // Update: picking the earlier export itself (instead of the folder holding it) works too.
+    const QString out = update && QDir(target).dirName() == name && !QDir(target).exists(name) ? target : QDir(target).filePath(name);
+    QStringList skipped;
+    const int n = exportFolderForLlm(dir, out, update, &skipped);
+    QString msg = tr("Exported %n chart(s) to %1.", nullptr, n).arg(QDir::toNativeSeparators(out));
+    if (skipped.isEmpty()) return (void)QMessageBox::information(this, tr("Export for LLM"), msg);
+    QMessageBox::warning(this, tr("Export for LLM"), msg + "\n\n" + tr("Skipped:") + "\n" + skipped.join("\n\n"));
+}
+
+int MainWindow::exportFolderForLlm(const QString& dir, const QString& out, bool update, QStringList* skipped) {
+    QStringList files;
+    for (QDirIterator it(dir, {"*.flowx"}, QDir::Files, QDirIterator::Subdirectories); it.hasNext();) files << it.next();
+    int done = 0;
+    for (const QString& path : std::as_const(files)) {
+        const QString rel = QDir(dir).relativeFilePath(path);
+        const QString md = QDir(out).filePath(rel.chopped(QFileInfo(rel).suffix().size()) + "md");
+        // An open chart exports as shown (unsaved edits included), like File > Export; others from disk.
+        ChartScene loaded;
+        ChartScene* s = &loaded;
+        if (const OpenChart* t = findChart(path)) {
+            s = t->scene;
+        } else {
+            QJsonObject o;
+            if (const QString error = readChart(path, &o); !error.isEmpty()) {
+                *skipped << rel + ": " + error;
+                continue;
+            }
+            loaded.fromJson(o);
+        }
+        QString previous, error;  // null: no earlier export, fresh one
+        if (QFile f(md); update && f.open(QIODevice::ReadOnly)) previous = QString::fromUtf8(f.readAll());
+        const QString text = s->toLlmText(QFileInfo(md).completeBaseName(), previous, &error);
+        if (text.isNull()) {
+            *skipped << rel + ": " + error;
+            continue;
+        }
+        stampChartId(path, s);
+        QDir().mkpath(QFileInfo(md).absolutePath());
+        QSaveFile f(md);
+        if (!f.open(QIODevice::WriteOnly) || f.write(text.toUtf8()) < 0 || !f.commit()) {
+            *skipped << rel + ": " + tr("cannot write %1").arg(QDir::toNativeSeparators(md));
+            continue;
+        }
+        ++done;
+    }
+    return done;
 }
 
 void MainWindow::copy() {
