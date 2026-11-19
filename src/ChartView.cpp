@@ -66,7 +66,7 @@ public:
         if (m_img.isNull()) m_timer.start(0);  // first show: render soon, not inside this paint
         const QRect r = rect();
         const bool dark = m_view->isDark();
-        p->fillRect(r, dark ? QColor(38, 40, 46, 235) : QColor(255, 255, 255, 235));
+        p->fillRect(r, dark ? QColor(40, 40, 40, 235) : QColor(255, 255, 255, 235));
         p->drawImage(r.topLeft(), m_img);
         if (!m_world.isEmpty()) {
             const double k = kW / m_world.width();
@@ -79,7 +79,7 @@ public:
             p->drawRect(mapped);
             p->restore();
         }
-        p->setPen(QPen(dark ? QColor(70, 72, 80) : QColor(203, 213, 225), 1));
+        p->setPen(QPen(dark ? QColor(72, 72, 72) : QColor(203, 213, 225), 1));
         p->setBrush(Qt::NoBrush);
         p->drawRect(QRectF(r).adjusted(0.5, 0.5, -0.5, -0.5));
     }
@@ -177,7 +177,7 @@ QPointF ChartView::visibleCenter() const { return mapToScene(viewport()->rect().
 
 void ChartView::setDark(bool dark) {
     m_dark = dark;
-    m_bg = dark ? QColor(30, 31, 36) : QColor(248, 249, 251);
+    m_bg = dark ? QColor(30, 30, 30) : QColor(248, 249, 251);
     m_gridMinor = dark ? QColor(255, 255, 255, 14) : QColor(15, 23, 42, 16);
     m_gridMajor = dark ? QColor(255, 255, 255, 28) : QColor(15, 23, 42, 32);
     chart()->canvasColor = m_bg;

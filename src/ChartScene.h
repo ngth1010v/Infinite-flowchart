@@ -23,10 +23,11 @@ public:
     bool dragLayerOn = false;  // the view shows its drag layer image; baked items skip painting
     QColor canvasColor;  // the view's background; on screen, see-through container fills are blended onto it
     // Dark theme: item colors that are black, white or gray (low chroma) are drawn with their
-    // lightness flipped (white -> near-black, light gray -> dark gray, ...); colored ones stay.
+    // lightness flipped (black -> white, white -> a gray just above the canvas); colored ones stay.
+    // Containers flip to a darker floor than shapes/links, so layers lighten bottom to top.
     // Only how they are drawn on screen: the stored style, saved files and exports are untouched.
     bool darkCanvas = false;
-    QColor ink(const QColor& c) const;
+    QColor ink(const QColor& c, bool container = false) const;
     QVector<QLineF> guides;       // smart alignment guides, drawn by the view
     NodeItem* linkTarget = nullptr;  // while a link end is dragged: the node showing its anchors
     int linkAnchor = -1;             // linkTarget's anchor under the cursor (see NodeItem::hitAnchor)

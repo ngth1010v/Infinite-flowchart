@@ -111,14 +111,18 @@ QRectF ChartScene::contentRect() const {
     return r.isNull() ? r : r.adjusted(-20, -20, 20, 20);
 }
 
-QColor ChartScene::ink(const QColor& c) const {
+QColor ChartScene::ink(const QColor& c, bool container) const {
     if (!darkCanvas || !c.isValid()) return c;
     const QColor rgb = c.toRgb();
     const int hi = std::max({rgb.red(), rgb.green(), rgb.blue()}), lo = std::min({rgb.red(), rgb.green(), rgb.blue()});
     if (hi - lo > 40) return c;  // has a real hue: keep it
     float h, s, l, a;
     rgb.getHslF(&h, &s, &l, &a);
-    return QColor::fromHslF(h, s, 1 - l, a);
+    // Flipped lightness is squeezed into [floor, 1] so layers get lighter going up:
+    // canvas < containers < shapes and links (white maps to the floor, black to white).
+    const float bg = canvasColor.isValid() ? canvasColor.lightnessF() : 0.f;
+    const float floor = bg + (container ? 0.04f : 0.11f);
+    return QColor::fromHslF(h, 0, floor + (1 - l) * (1 - floor), a);  // pure gray: drop slate tints
 }
 
 bool ChartScene::exportTo(const QString& path) {

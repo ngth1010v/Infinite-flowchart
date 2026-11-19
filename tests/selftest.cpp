@@ -63,6 +63,18 @@ int main(int argc, char** argv) {
         CHECK(box->toJson()["padding"].toDouble() == 15);  // padding survives undo's reload
     }
 
+    {   // Dark theme: white fills lighten bottom to top: canvas < container < shape; black turns white.
+        ChartScene sc;
+        sc.darkCanvas = true;
+        sc.canvasColor = QColor(30, 31, 36);
+        const float bg = sc.canvasColor.lightnessF();
+        const float box = sc.ink(Qt::white, true).lightnessF(), shape = sc.ink(Qt::white).lightnessF();
+        CHECK(bg < box && box < shape && shape < 0.5f);
+        CHECK(sc.ink(Qt::black).lightnessF() > 0.99f);
+        CHECK(sc.ink(QColor(0x64, 0x74, 0x8b)).hslSaturationF() == 0);  // slate default stroke: pure gray
+        CHECK(sc.ink(QColor(220, 40, 40)) == QColor(220, 40, 40));  // colored: kept
+    }
+
     // Ctrl+L: fan-out links from one port get one shared horizontal run; undo restores them.
     {
         ChartScene sc;

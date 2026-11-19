@@ -119,7 +119,7 @@ void NodeItem::startEdit() {
     m_editor = ed;
     ed->document()->setDocumentMargin(0);
     ed->setFont(styleFont(style));
-    ed->setDefaultTextColor(chart() ? chart()->ink(style.text) : style.text);
+    ed->setDefaultTextColor(chart() ? chart()->ink(style.text, isContainer(shapeType)) : style.text);
     // Containers edit their title in the header band; the horizontal one's title runs bottom-to-top.
     const bool rotated = shapeType == FlowShape::HContainer;
     const QRectF band = textRect();
@@ -295,7 +295,7 @@ void NodeItem::paint(QPainter* p, const QStyleOptionGraphicsItem* opt, QWidget*)
     if (skipPaint()) return;  // already in the drag layer image
     const double lod = opt->levelOfDetailFromTransform(p->worldTransform());
     const auto* cs = chart();
-    auto ink = [cs](const QColor& c) { return cs ? cs->ink(c) : c; };
+    auto ink = [cs, box = isContainer(shapeType)](const QColor& c) { return cs ? cs->ink(c, box) : c; };
     const QPen pen = style.dash == Qt::NoPen || style.strokeWidth <= 0
                          ? QPen(Qt::NoPen)
                          : QPen(ink(style.stroke), style.strokeWidth, style.dash, Qt::FlatCap, Qt::MiterJoin);
