@@ -55,6 +55,8 @@ private:
 ChartScene::ChartScene(QObject* parent)
     : QGraphicsScene(parent), chartId(QUuid::createUuid().toString(QUuid::WithoutBraces)), m_undo(new QUndoStack(this)) {
     m_undo->setUndoLimit(300);
+    m_llm = toLlmText({});
+    connect(m_undo, &QUndoStack::indexChanged, this, [this] { m_llm = toLlmText({}); });
     // Resize handles show only for a single selection, so repaint selected nodes when it changes.
     connect(this, &QGraphicsScene::selectionChanged, this, [this] {
         const auto sel = selectedItems();
@@ -98,6 +100,7 @@ void ChartScene::fromJson(const QJsonObject& o) {
         createItem(j);
     }
     m_undo->clear();
+    m_llm = toLlmText({});  // clear() does not signal when the stack was already empty
 }
 
 QRectF ChartScene::contentRect() const {
@@ -215,7 +218,8 @@ LlmOutline parseLlmText(const QString& text) {
 }
 }  // namespace
 
-QString ChartScene::toLlmText(const QString& title, const QString& previous, QString* error) const {
+QString ChartScene::toLlmText(const QString& title, const QString& previous, QString* error, QSet<int>* marked,
+                              bool* changed) const {
     QList<NodeItem*> nodes;
     for (auto* c : m_items)
         if (auto* n = qgraphicsitem_cast<NodeItem*>(c)) nodes << n;
@@ -251,13 +255,14 @@ QString ChartScene::toLlmText(const QString& title, const QString& previous, QSt
         }
     };
     tree(nullptr, 0);
-    QList<int> ids = m_items.keys();
+    QList<int> ids = m_items.keys(), linkIds;  // linkIds: item id of each now.links entry
     std::sort(ids.begin(), ids.end());
     for (int id : ids) {
         auto* l = qgraphicsitem_cast<LinkItem*>(m_items[id]);
         if (!l || !l->from || !l->to) continue;
         const char* arrow = l->style.arrowEnd ? (l->style.arrowStart ? "<->" : "->") : (l->style.arrowStart ? "<-" : "--");
         const QString t = l->text.simplified(), tail = t.isEmpty() ? "" : " (label: \"" + t + "\")";
+        linkIds << id;
         now.links << QPair(QString("%1 %2 %3%4").arg(l->from->id).arg(arrow).arg(l->to->id).arg(tail),
                            label(l->from) + " " + arrow + " " + label(l->to) + tail);
     }
@@ -309,6 +314,12 @@ QString ChartScene::toLlmText(const QString& title, const QString& previous, QSt
         }
         for (const auto& l : old.links)
             if (nowCount[l.first]-- <= 0) changes << "- Removed link: " + l.second;
+        if (marked) {
+            for (auto it = mark.begin(); it != mark.end(); ++it) marked->insert(it.key());
+            for (int i = 0; i < newLink.size(); ++i)
+                if (newLink[i]) marked->insert(linkIds[i]);
+        }
+        if (changed) *changed = !changes.isEmpty();
     }
 
     QString out = "# Flowchart: " + title + "\n\n<!-- flowx chart " + chartId + " -->\n\n"
@@ -359,7 +370,11 @@ void ChartScene::apply(const States& states) {
 
 void ChartScene::push(const QString& text, const States& before, const States& after, const QString& mergeKey) {
     if (before == after) return;
+    const QString was = m_llm;  // the chart before this edit (pushing refreshes m_llm)
+    auto top = [this] { return m_undo->index() ? m_undo->command(m_undo->index() - 1) : nullptr; };
+    const QUndoCommand* old = top();
     m_undo->push(new StateCommand(this, text, before, after, mergeKey));
+    emit edited(text, was, old && top() == old);
 }
 
 ChartItem* ChartScene::createItem(const QJsonObject& j) {

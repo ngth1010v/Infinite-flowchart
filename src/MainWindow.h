@@ -1,4 +1,5 @@
 #pragma once
+#include <QDateTime>
 #include <QFileSystemWatcher>
 #include <QJsonObject>
 #include <QMainWindow>
@@ -17,6 +18,7 @@ class QFileSystemModel;
 class QStackedWidget;
 class QToolButton;
 class QTreeView;
+class QTreeWidget;
 class QUndoGroup;
 class FindPanel;
 class ShapePalette;
@@ -31,6 +33,15 @@ struct OpenChart {
     QString path;      // empty: Untitled
     QString recovery;  // autosave copy of unsaved work for crash recovery; empty until written
     QJsonObject disk;  // chart content last read from or written to path (no thumbnail/view/id); empty: unknown
+    bool historyChanged = false;  // history pane: changed since the picked row (icon in the folder pane)
+};
+
+// One undo step in any open chart, for the history pane (Alt+C). Session only.
+struct HistoryRow {
+    QDateTime time;
+    OpenChart* chart;
+    QString text;    // undo text, e.g. "Edit text"
+    QString before;  // the chart's LLM outline before this step
 };
 
 class MainWindow : public QMainWindow {
@@ -93,6 +104,15 @@ private:
     QTimer m_autosave;
     QFileSystemWatcher m_watcher;  // open charts' files, to pick up changes made outside the app
     int m_pasteCount = 0;
+    // History pane (Alt+C), right of the chart: newest undo step first. Clicking a row outlines
+    // what changed since it in every chart; clicking it again copies the LLM update prompt.
+    QList<HistoryRow> m_history;
+    QWidget* m_historyBox;
+    QTreeWidget* m_historyList;
+    int m_historyPick = -1;  // index in m_history
+    QString m_historyPrompt;
+    QLabel* m_toast;  // short message left of the zoom ratio
+    QTimer m_toastTimer;
 
     QAction* makeAction(QMenu* menu, const QString& text, const QList<QKeySequence>& keys,
                        const std::function<void()>& fn, bool chartOnly = true);
@@ -127,6 +147,9 @@ private:
     void watchCharts();               // watch every open chart's file
     void exportChart(bool forLlm = false);  // forLlm: text outline (.md/.txt) instead of an image
     void exportLlmUpdate();                 // rewrite an earlier LLM export of this chart, marking the changes
+    void setHistoryOpen(bool open);
+    void pickHistory(int row);  // outline changes since m_history[row] and build m_historyPrompt
+    void toast(const QString& text);
     void copy();
     void paste();
     void applyTheme(bool dark);

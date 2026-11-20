@@ -3,6 +3,7 @@
 #include <QGraphicsScene>
 #include <QHash>
 #include <QJsonObject>
+#include <QSet>
 #include <QUndoStack>
 #include <functional>
 
@@ -65,11 +66,17 @@ public:
     // With `previous` (an earlier export of this chart), lines that differ are marked and a
     // "Changes" section lists what was added, changed and removed. If `previous` is not an
     // export of this chart, returns a null string and sets *error.
-    QString toLlmText(const QString& title, const QString& previous = {}, QString* error = nullptr) const;
+    // With `previous`, *marked gets the ids of the shapes and links marked (new)/(changed), and
+    // *changed whether anything changed at all (removals included).
+    QString toLlmText(const QString& title, const QString& previous = {}, QString* error = nullptr,
+                      QSet<int>* marked = nullptr, bool* changed = nullptr) const;
     // Identifies the chart across saves and LLM exports. fromJson takes it from the file or makes
     // a new one; chartIdSaved says whether the file on disk already holds it.
     QString chartId;
     bool chartIdSaved = false;
+
+    // History pane (Alt+C): ids of the items changed since the picked history row, outlined on screen.
+    QSet<int> historyMarks;
 
     // Undoable edits
     NodeItem* addNode(FlowShape s, QPointF center);
@@ -117,6 +124,11 @@ public:
     void endLinkDrag(QPointF pos);
     void cancelLinkDrag();
 
+signals:
+    // An edit was recorded on the undo stack. `before` is toLlmText of the chart before it;
+    // merged: it was folded into the previous undo step (typing, spin box steps).
+    void edited(const QString& text, const QString& before, bool merged);
+
 protected:
     void mousePressEvent(QGraphicsSceneMouseEvent* e) override;
     void mouseMoveEvent(QGraphicsSceneMouseEvent* e) override;
@@ -128,6 +140,7 @@ private:
     QHash<int, ChartItem*> m_items;
     int m_nextId = 1;
     int m_selectionSize = 0;
+    QString m_llm;  // toLlmText of the chart as it is, refreshed on every undo index change
     QList<int> m_pressIds;
     States m_pressState;
     QPointF m_grabPress, m_dragDelta;  // during a drag: grabbed item's start position, mouse travel

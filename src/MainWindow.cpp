@@ -36,7 +36,9 @@
 #include <QStyleHints>
 #include <QStyledItemDelegate>
 #include <QToolButton>
+#include <QHeaderView>
 #include <QTreeView>
+#include <QTreeWidget>
 #include <QUndoGroup>
 #include <QUndoStack>
 #include <QUrl>
@@ -220,10 +222,11 @@ protected:
     void drawBranches(QPainter*, const QRect&, const QModelIndex&) const override {}
 };
 
-// Right edge of each row: a caret on folders, a red dot on files with unsaved changes.
+// Right edge of each row: a caret on folders, a red dot on files with unsaved changes, and left of
+// that a green diamond on files changed since the row picked in the history pane.
 class FolderDelegate : public QStyledItemDelegate {
 public:
-    std::function<bool(const QString& path)> unsaved;
+    std::function<bool(const QString& path)> unsaved, changed;
     using QStyledItemDelegate::QStyledItemDelegate;
     void paint(QPainter* p, const QStyleOptionViewItem& opt, const QModelIndex& index) const override {
         QStyle* style = opt.widget->style();
@@ -232,11 +235,21 @@ public:
         bg.text.clear();
         bg.icon = QIcon();
         style->drawControl(QStyle::CE_ItemViewItem, &bg, p, opt.widget);
+        const auto* model = static_cast<const QFileSystemModel*>(index.model());
+        const bool isChanged = !model->isDir(index) && changed(model->filePath(index));
         QStyleOptionViewItem left = opt;
-        left.rect.setRight(opt.rect.right() - 18);
+        left.rect.setRight(opt.rect.right() - (isChanged ? 34 : 18));
         QStyledItemDelegate::paint(p, left, index);
         const QRect mark(opt.rect.right() - 16, opt.rect.top(), 14, opt.rect.height());
-        const auto* model = static_cast<const QFileSystemModel*>(index.model());
+        if (isChanged) {
+            const QPointF c = QPointF(mark.center()) + QPointF(-15.5, 0.5);
+            p->save();
+            p->setRenderHint(QPainter::Antialiasing);
+            p->setPen(Qt::NoPen);
+            p->setBrush(QColor(22, 163, 74));
+            p->drawPolygon(QPolygonF{c + QPointF(0, -4.5), c + QPointF(4.5, 0), c + QPointF(0, 4.5), c + QPointF(-4.5, 0)});
+            p->restore();
+        }
         if (model->isDir(index)) {
             QStyleOption a;
             a.rect = mark;
@@ -346,6 +359,10 @@ MainWindow::MainWindow() {
         const OpenChart* t = findChart(path);
         return t && !t->scene->undoStack()->isClean();
     };
+    delegate->changed = [this](const QString& path) {
+        const OpenChart* t = findChart(path);
+        return t && t->historyChanged;
+    };
     m_tree->setItemDelegate(delegate);
     connect(m_tree, &QTreeView::clicked, this, [this](const QModelIndex& i) {
         if (m_fsModel->isDir(i)) m_tree->setExpanded(i, !m_tree->isExpanded(i));
@@ -396,6 +413,35 @@ MainWindow::MainWindow() {
         box->setBackgroundRole(QPalette::Base);
     }
 
+    m_historyList = new QTreeWidget;
+    m_historyList->setColumnCount(2);
+    m_historyList->setHeaderHidden(true);
+    m_historyList->setRootIsDecorated(false);
+    m_historyList->setFrameShape(QFrame::NoFrame);
+    m_historyList->header()->setStretchLastSection(true);
+    m_historyList->header()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
+    connect(m_historyList, &QTreeWidget::itemClicked, this, [this](QTreeWidgetItem* item) {
+        const int row = item->data(0, Qt::UserRole).toInt();
+        if (row != m_historyPick) return pickHistory(row);
+        const int files = int(std::count_if(m_charts.begin(), m_charts.end(), [](OpenChart* t) { return t->historyChanged; }));
+        if (files) QGuiApplication::clipboard()->setText(m_historyPrompt);
+        setHistoryOpen(false);
+        toast(files ? tr("Copied changes of %n chart(s) as an LLM prompt", nullptr, files) : tr("Nothing to copy: no shape, text or link changed"));
+    });
+    auto* historyHint = new QLabel(tr("<b>History</b><br>Click a change to outline everything changed since. Click it again to copy the changes as an LLM prompt."));
+    historyHint->setWordWrap(true);
+    historyHint->setContentsMargins(6, 6, 6, 4);
+    m_historyBox = new QWidget;
+    m_historyBox->setFixedWidth(kPanelOpen);
+    m_historyBox->setAutoFillBackground(true);
+    m_historyBox->setBackgroundRole(QPalette::Base);
+    auto* hbl = new QVBoxLayout(m_historyBox);
+    hbl->setContentsMargins(0, 0, 0, 0);
+    hbl->setSpacing(0);
+    hbl->addWidget(historyHint);
+    hbl->addWidget(m_historyList, 1);
+    m_historyBox->hide();
+
     auto* noChart = new QLabel(tr("Pick a chart on the left, or create one with + New file."));
     noChart->setAlignment(Qt::AlignCenter);
     noChart->setEnabled(false);
@@ -409,6 +455,7 @@ MainWindow::MainWindow() {
     h->addWidget(m_folderGap);
     h->addWidget(m_paletteBox);
     h->addWidget(m_views, 1);
+    h->addWidget(m_historyBox);
     h->addWidget(m_panelScroll);
     h->addWidget(panelStrip);
     m_chartPage = new QWidget;
@@ -423,7 +470,12 @@ MainWindow::MainWindow() {
     m_zoomLabel = new QLabel;
     statusBar()->addWidget(new QLabel(tr("Wheel: zoom   ·   Right-drag / Space-drag / Shift+wheel: pan   ·   Ctrl+1: fit chart   ·   "
                                          "Alt while dragging: no snap   ·   Hover a shape and drag an arrow to connect")));
+    m_toast = new QLabel;
+    statusBar()->addPermanentWidget(m_toast);
     statusBar()->addPermanentWidget(m_zoomLabel);
+    m_toastTimer.setSingleShot(true);
+    m_toastTimer.setInterval(4000);
+    connect(&m_toastTimer, &QTimer::timeout, m_toast, &QLabel::clear);
 
     buildMenus();
 
@@ -521,6 +573,8 @@ void MainWindow::buildMenus() {
     edit->addSeparator();
     makeAction(edit, tr("&Find && replace"), {QKeySequence::Find}, [this] { m_find->open(); });
     makeAction(edit, tr("Select &all"), {QKeySequence::SelectAll}, [this] { scene()->selectAll(); });
+    makeAction(edit, tr("C&hange history"), {QKeySequence(Qt::ALT | Qt::Key_C)},
+               [this] { setHistoryOpen(m_historyBox->isHidden()); });
     // Shapes first, so a selected container then wraps them at their fitted size.
     makeAction(edit, tr("&Fit to content"), {QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_F)}, [this] {
         scene()->fitSelectedShapes();
@@ -663,6 +717,7 @@ bool MainWindow::onChart() const { return m_stack->currentWidget() == m_chartPag
 
 void MainWindow::showHome() {
     m_find->close();
+    setHistoryOpen(false);
     m_stack->setCurrentWidget(m_home);
     for (auto* a : std::as_const(m_chartActions)) a->setEnabled(false);
     m_rightAnim.stop();
@@ -702,6 +757,17 @@ OpenChart* MainWindow::addChart() {
     m_views->addWidget(t->view);
     m_undoGroup->addStack(t->scene->undoStack());
     connect(t->scene->undoStack(), &QUndoStack::cleanChanged, this, [this, t] { chartStateChanged(t); });
+    // Any edit, undo, redo or reload closes the history pane (its outlines would be stale).
+    connect(t->scene->undoStack(), &QUndoStack::indexChanged, this, [this] { setHistoryOpen(false); });
+    connect(t->scene, &ChartScene::edited, this, [this, t](const QString& text, const QString& before, bool merged) {
+        if (merged)  // same step continued: the row keeps its "before", takes the new time
+            for (int i = int(m_history.size()) - 1; i >= 0; --i)
+                if (m_history[i].chart == t) {
+                    m_history[i].time = QDateTime::currentDateTime();
+                    return;
+                }
+        m_history.append({QDateTime::currentDateTime(), t, text, before});
+    });
     connect(t->view, &ChartView::zoomChanged, this, [this, t](double z) {
         if (t == m_cur) m_zoomLabel->setText(QStringLiteral("%1%").arg(qRound(z * 100)));
     });
@@ -743,6 +809,8 @@ void MainWindow::chartStateChanged(OpenChart* t) {
 }
 
 void MainWindow::removeChart(OpenChart* t) {
+    setHistoryOpen(false);
+    m_history.removeIf([t](const HistoryRow& r) { return r.chart == t; });
     m_charts.removeOne(t);
     if (t == m_cur) setCurrent(nullptr);
     m_undoGroup->removeStack(t->scene->undoStack());
@@ -1367,6 +1435,68 @@ void MainWindow::setPaletteCollapsed(bool collapsed, bool animate) {
 void MainWindow::setPaletteWidth(int w) {
     m_paletteBox->setFixedWidth(w);
     m_palette->setHeaderScale(0.75 + 0.25 * (w - kPaletteClosed) / double(kPaletteOpen - kPaletteClosed));
+}
+
+// ---------------------------------------------------------------- history pane (Alt+C)
+
+void MainWindow::setHistoryOpen(bool open) {
+    if (open == !m_historyBox->isHidden()) return;
+    m_historyPick = -1;
+    m_historyPrompt.clear();
+    for (auto* t : std::as_const(m_charts)) {
+        t->historyChanged = false;
+        if (!t->scene->historyMarks.isEmpty()) {
+            t->scene->historyMarks.clear();
+            t->scene->update();
+        }
+    }
+    m_tree->viewport()->update();
+    m_historyList->clear();
+    m_historyBox->setVisible(open);
+    if (!open) {
+        if (view()) view()->setFocus();
+        return;
+    }
+    for (int i = int(m_history.size()) - 1; i >= 0; --i) {
+        const HistoryRow& r = m_history[i];
+        auto* item = new QTreeWidgetItem(m_historyList, {r.time.toString("HH:mm:ss"),
+                                                         r.chart->path.isEmpty() ? tr("Untitled") : QFileInfo(r.chart->path).fileName()});
+        item->setData(0, Qt::UserRole, i);
+        item->setTextAlignment(1, Qt::AlignRight | Qt::AlignVCenter);
+        item->setToolTip(1, r.text + "\n" + QDir::toNativeSeparators(r.chart->path));
+    }
+    m_historyList->setFocus();
+}
+
+void MainWindow::pickHistory(int row) {
+    m_historyPick = row;
+    m_historyPrompt.clear();
+    for (auto* t : std::as_const(m_charts)) {
+        t->historyChanged = false;
+        t->scene->historyMarks.clear();
+        // The chart's first step at or after `row` holds how it looked at that time.
+        auto first = std::find_if(m_history.begin() + row, m_history.end(), [t](const HistoryRow& r) { return r.chart == t; });
+        if (first != m_history.end()) {
+            const QString title = t->path.isEmpty() ? tr("Untitled") : QFileInfo(t->path).completeBaseName();
+            QString text = t->scene->toLlmText(title, first->before, nullptr, &t->scene->historyMarks, &t->historyChanged);
+            if (text.isNull()) {  // chart id changed (reloaded from another file): send it whole
+                text = t->scene->toLlmText(title);
+                t->historyChanged = true;
+            }
+            // Under the "# Flowchart: <title>" line: where the chart lives, so an LLM can edit the file.
+            text.insert(text.indexOf('\n') + 1, "\nFile: " + (t->path.isEmpty() ? tr("(not saved yet)") : QDir::toNativeSeparators(t->path)) + "\n");
+            if (t->historyChanged) m_historyPrompt +=(m_historyPrompt.isEmpty() ? "" : "\n---\n\n") + text;
+        }
+        t->scene->update();
+    }
+    m_tree->viewport()->update();
+    setCurrent(m_history[row].chart);
+    m_historyList->setFocus();  // setCurrent focuses the chart
+}
+
+void MainWindow::toast(const QString& text) {
+    m_toast->setText(text + "   ");
+    m_toastTimer.start();
 }
 
 void MainWindow::updatePanelVisibility() {

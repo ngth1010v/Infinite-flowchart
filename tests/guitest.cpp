@@ -16,6 +16,8 @@
 #include <QMimeData>
 #include <QTabBar>
 #include <QTreeView>
+#include <QTreeWidget>
+#include <QClipboard>
 #include <memory>
 #include <QTemporaryDir>
 #include <QToolButton>
@@ -614,6 +616,66 @@ int main(int argc, char** argv) {
         answer("Overwrite");
         w.saveAll();
         CHECK(nodesOnDisk() == 3 && s->undoStack()->isClean());
+    }
+
+    // History pane (Alt+C): rows are undo steps across charts; clicking one outlines what changed
+    // since it in every chart, clicking it again copies the prompt and closes; an edit closes it.
+    {
+        QTemporaryDir dir;
+        auto writeChart = [&](const QString& name) {
+            ChartScene s;
+            s.addNode(FlowShape::Process, {0, 0});
+            QFile f(dir.filePath(name));
+            f.open(QIODevice::WriteOnly);
+            f.write(QJsonDocument(s.toJson()).toJson());
+            return QFileInfo(f.fileName()).absoluteFilePath();
+        };
+        const QString a = writeChart("a.flowx"), b = writeChart("b.flowx");
+        MainWindow w;
+        w.show();
+        CHECK(QTest::qWaitForWindowExposed(&w));
+        w.openFolder(dir.path());
+        auto visible = [&] {
+            for (auto* v : w.findChildren<ChartView*>())
+                if (v->isVisible()) return v->chart();
+            return static_cast<ChartScene*>(nullptr);
+        };
+        CHECK(w.openFile(a));
+        ChartScene* sa = visible();
+        sa->addNode(FlowShape::Decision, {0, 200});  // row 0 (a)
+        CHECK(w.openFile(b));
+        ChartScene* sb = visible();
+        NodeItem* moved = sb->addNode(FlowShape::Process, {300, 0});  // row 1 (b)
+        sb->clearSelection();
+        moved->setSelected(true);
+        sb->editSelected({}, [](ChartItem* c) { c->setPos(c->pos() + QPointF(0, 40)); });  // row 2: move only
+
+        auto* list = w.findChild<QTreeWidget*>();
+        CHECK(list && !list->isVisible());
+        QTest::keyClick(&w, Qt::Key_C, Qt::AltModifier);
+        CHECK(list->isVisible() && list->topLevelItemCount() == 3);
+        auto click = [&](int i) {  // i: list row, newest first
+            const QRect r = list->visualItemRect(list->topLevelItem(i));
+            QTest::mouseClick(list->viewport(), Qt::LeftButton, {}, r.center());
+        };
+        click(2);  // oldest: both charts changed
+        CHECK(sa->historyMarks.size() == 1 && sb->historyMarks.size() == 1 && sb->historyMarks.contains(moved->id));
+        CHECK(w.currentPath() == a);
+        click(0);  // only a move since: nothing the prompt shows
+        CHECK(sa->historyMarks.isEmpty() && sb->historyMarks.isEmpty());
+        click(1);
+        CHECK(sa->historyMarks.isEmpty() && sb->historyMarks.contains(moved->id));
+        QApplication::clipboard()->clear();
+        click(1);  // again: copy and close
+        CHECK(!list->isVisible() && sb->historyMarks.isEmpty());
+        const QString prompt = QApplication::clipboard()->text();
+        CHECK(prompt.contains("# Flowchart: b\n\nFile: " + QDir::toNativeSeparators(b) + "\n") &&!prompt.contains("# Flowchart: a") && prompt.contains("Added shape"));
+
+        QTest::keyClick(&w, Qt::Key_C, Qt::AltModifier);
+        click(2);
+        CHECK(list->isVisible() && !sa->historyMarks.isEmpty());
+        visible()->addNode(FlowShape::Process, {600, 0});  // editing closes the pane
+        CHECK(!list->isVisible() && sa->historyMarks.isEmpty());
     }
 
     std::printf("OK  gui interactions\n");

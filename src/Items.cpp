@@ -18,6 +18,7 @@
 namespace {
 const QColor kAccent(37, 99, 235);
 const QColor kFindMatch(250, 204, 21, 150), kFindCurrent(249, 115, 22, 200);  // find highlights: yellow, orange
+const QColor kChanged(22, 163, 74, 210);  // history pane (Alt+C): changed since the picked row
 constexpr double kMargin = 64;  // room around a node for handles and quick-connect arrows (at 2x uiUnit)
 constexpr double kMinSize = 20;
 }  // namespace
@@ -345,6 +346,13 @@ void NodeItem::paint(QPainter* p, const QStyleOptionGraphicsItem* opt, QWidget*)
         QPen fp(kFindCurrent, 3);
         fp.setCosmetic(true);
         p->setPen(fp);
+        p->setBrush(Qt::NoBrush);
+        p->drawRect(rect().adjusted(-6 * u, -6 * u, 6 * u, 6 * u));
+    }
+    if (c->historyMarks.contains(id)) {
+        QPen hp(kChanged, 3, Qt::DashLine);
+        hp.setCosmetic(true);
+        p->setPen(hp);
         p->setBrush(Qt::NoBrush);
         p->drawRect(rect().adjusted(-6 * u, -6 * u, 6 * u, 6 * u));
     }
@@ -885,6 +893,11 @@ void LinkItem::paint(QPainter* p, const QStyleOptionGraphicsItem* opt, QWidget*)
     if (n < 2) return;
     const auto* c = chart();
     auto ink = [c](const QColor& col) { return c ? c->ink(col) : col; };
+    if (c && !c->overlaysHidden && c->historyMarks.contains(id)) {
+        p->setPen(QPen(QColor(22, 163, 74, 120), style.strokeWidth + 8, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+        p->setBrush(Qt::NoBrush);
+        p->drawPath(roundedPolyline(m_pts, kLinkCorner));
+    }
     if (isSelected() && !(c && c->overlaysHidden)) {
         p->setPen(QPen(QColor(37, 99, 235, 90), style.strokeWidth + 6, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
         p->setBrush(Qt::NoBrush);
